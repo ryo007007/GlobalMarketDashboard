@@ -80,7 +80,7 @@ World Market Overview
 
 ---
 
-# 6.Design Philosophy（設計思想）
+# 6. Design Philosophy（設計思想）
 
 「インジケーター」
 
