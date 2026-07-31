@@ -10,8 +10,10 @@ Version 1.0
 Global Market Dashboard Ultimate は、
 MT5上で世界の資金の流れを可視化するための
 マーケットダッシュボードである。
+
 目標は日利１％
-心（精神）技(マーケットダッシュボード)体(練習)
+
+成果は技と道具（GlobalMarketDashboard）と供に発展していく。
 
 ---
 
