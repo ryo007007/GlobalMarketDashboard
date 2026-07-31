@@ -14,24 +14,6 @@
 
 ## 5. Display Modes
 画面構成
-## Desi
-
-Global Market Dashboard Ultimate は
-
-単なるMT5インジケーターではない。
-
-FX・株式・Gold・暗号資産・債券を一つの画面で確認し、
-
-市場全体の資金の流れを短時間で把握するための
-マーケット分析ダッシュボードである。
-
-目的は
-
-「相場を見る」のではなく
-
-「世界のお金の流れを見る」
-
-ことである。
 
 ## 6. Currency Strength Engine
 
