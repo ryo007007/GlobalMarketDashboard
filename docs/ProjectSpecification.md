@@ -112,6 +112,16 @@ Silver
 
 ## 8. Asset Detection
 
+Asset Detection
+    ↓
+データ取得
+    ↓
+Market Regime Engine
+    ↓
+Money Flow Engine
+    ↓
+Dashboard表示
+
 Gold
 
 XAUUSD
@@ -140,14 +150,48 @@ SPX500
 
 JP225
 
-## 9. Confidence Engine
+## 9. Market Regime Engine
 
-## 10. Best Pair Engine
+Inputs
 
-## 11. Market Open Countdown
+SP500
 
-## 12. Economic Events
+NASDAQ
 
-## 13. Future Roadmap
+US10Y
 
-## 14. Version History
+Gold
+
+USDJPY
+
+BTC
+
+ETH
+
+VIX
+
+DXY
+
+↓
+
+Score
+
+↓
+
+Risk ON
+
+Risk OFF
+
+Neutral
+
+## 10. Confidence Engine
+
+## 11. Best Pair Engine
+
+## 12. Market Open Countdown
+
+## 13. Economic Events
+
+## 14. Future Roadmap
+
+## 15. Version History
