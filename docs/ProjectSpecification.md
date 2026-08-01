@@ -112,6 +112,34 @@ Silver
 
 ## 8. Asset Detection
 
+Gold
+
+XAUUSD
+
+GOLD
+
+GOLDmicro
+
+Silver
+
+XAGUSD
+
+BTC
+
+BTCUSD
+
+BTCUSDT
+
+Index
+
+US30
+
+NAS100
+
+SPX500
+
+JP225
+
 ## 9. Confidence Engine
 
 ## 10. Best Pair Engine
