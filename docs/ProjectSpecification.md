@@ -1,5 +1,21 @@
 # Global Market Dashboard Ultimate
 
+**Project** : Global Market Dashboard Ultimate
+
+**Platform** : MetaTrader 5 (MT5)
+
+**Language** : MQL5
+
+**Repository** : GlobalMarketDashboard
+
+**Current Version** : 2.11 Ultimate (Development)
+
+**Document Version** : Project Specification v0.1
+
+**Author** : Ryoutarou Kadono
+
+**Status** : In Development
+
 ## 1. Project Overview
 プロジェクト概要
 
