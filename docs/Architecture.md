@@ -31,3 +31,36 @@
 - **Money Flow**: 通貨間の資金フローの追跡
 - **Confidence**: シグナルの信頼度判定
 - **Draw Dashboard**: チャート上にUI（ダッシュボード）を描画
+
+# システムアーキテクチャ概要 (System Architecture)
+
+本インジケーター/システムの内部設計は、**データ取得（Data）**・**分析処理（Analysis）**・**画面表示（Presentation）** の3層（3-Tier Architecture）に分かれた設計となっています。
+
+---
+
+## 🏗️ 階層構造図 (Layer Architecture)
+
+```text
+               Data Layer
+ ┌──────────────────────────┐
+ │ FX │ Gold │ Bond │ BTC │ VIX │
+ └──────────────┬───────────┘
+                │
+                ▼
+         Analysis Layer
+ ┌──────────────────────────┐
+ │ Currency Strength        │
+ │ Market Regime            │
+ │ Money Flow               │
+ │ Confidence               │
+ │ Best Pair                │
+ └──────────────┬───────────┘
+                │
+                ▼
+       Presentation Layer
+ ┌──────────────────────────┐
+ │ Chart                    │
+ │ Dashboard                │
+ │ Hybrid                   │
+ │ Minimal                  │
+ └──────────────────────────┘
