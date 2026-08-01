@@ -154,6 +154,33 @@ SPX500
 
 JP225
 
+Asset Detection
+
+FX
+・USDJPY
+・EURUSD
+・GBPUSD
+
+Precious Metals
+・Gold
+・Silver
+
+Equity Index
+・SP500
+・NAS100
+・US30
+・JP225
+・GER40
+・UK100
+
+Crypto
+・BTC
+・ETH
+
+Bond
+・US10Y
+・US30Y
+
 ## 9. Market Regime Engine
 
 Inputs
@@ -190,7 +217,50 @@ Neutral
 
 ## 10. Confidence Engine
 
+現在検討中
+
+Confidence
+
+判定材料
+
+・Currency Strength
+・Money Flow
+・Risk Score
+・Market Regime
+・Momentum
+
+↓
+
+0〜100%
+
+
 ## 11. Best Pair Engine
+
+Best Pair Engine
+
+入力
+
+Currency Strength
+
+↓
+
+最強通貨
+
+最弱通貨
+
+↓
+
+おすすめ通貨ペア
+
+例
+
+EUR ↑
+
+JPY ↓
+
+↓
+
+EURJPY
 
 ## 12. Market Open Countdown
 
