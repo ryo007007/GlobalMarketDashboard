@@ -262,10 +262,62 @@ JPY ↓
 
 EURJPY
 
-## 12. Market Open Countdown
+## 12. Display Modes
 
-## 13. Economic Events
+Mode 1
 
-## 14. Future Roadmap
+Chart
 
-## 15. Version History
+・チャート
+・移動平均
+・BB
+・Pivot
+
+Mode 2
+
+Dashboard
+
+・Market Dashboardのみ
+
+Mode 3
+
+Hybrid
+
+・チャート
+・Dashboard
+
+Mode 4
+
+Minimal
+
+・ランキングのみ
+
+## 13. Market Open Countdown
+
+## 14. Economic Events
+
+## 15. Future Roadmap
+
+## 16. Performance Design
+
+更新間隔
+
+1秒
+
+または
+
+新しいバーのみ
+
+CPU負荷
+
+できるだけ低くする
+
+オブジェクト数
+
+最小限
+
+描画
+
+差分更新
+
+## 17. Version History
