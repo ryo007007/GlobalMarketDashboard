@@ -337,3 +337,23 @@ CPU負荷
 差分更新
 
 ## 17. Version History
+
+## 18. Module Structure
+
+Modules
+
+CurrencyStrength.mqh
+
+MoneyFlow.mqh
+
+MarketRegime.mqh
+
+AssetDetection.mqh
+
+Confidence.mqh
+
+BestPair.mqh
+
+Dashboard.mqh
+
+EventManager.mqh
