@@ -112,14 +112,18 @@ Silver
 
 ## 8. Asset Detection
 
-Asset Detection
+Asset Detection    
     ↓
-データ取得
+    
+データ取得    
     ↓
-Market Regime Engine
+    
+Market Regime Engine    
     ↓
-Money Flow Engine
+    
+Money Flow Engine    
     ↓
+    
 Dashboard表示
 
 Gold
