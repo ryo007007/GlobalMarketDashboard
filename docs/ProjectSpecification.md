@@ -74,6 +74,42 @@ CAD
 
 ## 7. Money Flow Engine
 
+目的
+
+市場全体の資金の流れを可視化する。
+
+対象市場
+
+FX
+
+Gold
+
+Silver
+
+株価指数
+
+暗号資産
+
+債券
+
+リスクオン／リスクオフ
+
+表示方法
+
+↑ 資金流入
+
+→ 中立
+
+↓ 資金流出
+
+色
+
+流入：緑
+
+流出：赤
+
+中立：灰色
+
 ## 8. Asset Detection
 
 ## 9. Confidence Engine
