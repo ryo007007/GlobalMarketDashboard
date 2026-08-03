@@ -360,6 +360,10 @@ Dashboard.mqh
 
 EventManager.mqh
 
+Utils.mqh
+
+Logger.mqh
+
 ## 19. Dashboard Layout
 
 ```text
