@@ -338,7 +338,7 @@ CPU負荷
 
 ## 17. Version History
 
-ProjectSpecification v0.1
+（ProjectSpecification Ver0.2）
 
 ## 18. Module Structure
 
