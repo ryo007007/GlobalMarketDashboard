@@ -1,4 +1,4 @@
-# Global Market Dashboard Ultimate
+# Global Market Dashboard Ultimate Edition
 
 **Project** : Global Market Dashboard Ultimate
 
