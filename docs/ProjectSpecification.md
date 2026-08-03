@@ -342,27 +342,29 @@ CPU負荷
 
 ## 18. Module Structure
 
-Modules
+# システムモジュール構成 (System Modules Architecture)
 
-CurrencyStrength.mqh
+本プロジェクトは、保守性・再利用性・拡張性を高めるため、以下の役割別ヘッダーファイル（`.mqh`）にクラス・モジュールを分割して開発します。
 
-MoneyFlow.mqh
+---
 
-MarketRegime.mqh
+## 📁 モジュール一覧 & 役割定義
 
-AssetDetection.mqh
+```text
+src/
+├── CurrencyStrength.mqh  // 28通貨ペアの強弱スコア計算エンジン
+├── MoneyFlow.mqh         // アセット間（株・金・債券・暗号資産）の資金流出入分析
+├── MarketRegime.mqh      // Risk Score (0-100) および Risk ON/OFF 判定
+├── AssetDetection.mqh    // ブローカー固有の銘柄名・GOLD等の自動検出
+├── Confidence.mqh        // 各エンジンの寄与率に基づく総合確信度 (0-100%) 計算
+├── BestPair.mqh          // 最強 vs 最弱の「ベストペア」自動選定ロジック
+├── Dashboard.mqh         // Market Summary 含む GUI 描画・UIレイアウト制御
+├── EventManager.mqh      // 市場オープンカウントダウン・経済指標イベント管理
+├── Utils.mqh             // 配列操作・型変換・汎用補助関数群
+└── Logger.mqh            // 動作ログ・エラーハンドリング・デバッグ出力・初期化・シンボル検出・エラー・読み込み
+```
 
-Confidence.mqh
 
-BestPair.mqh
-
-Dashboard.mqh
-
-EventManager.mqh
-
-Utils.mqh
-
-Logger.mqh
 
 ## 19. Dashboard Layout
 
