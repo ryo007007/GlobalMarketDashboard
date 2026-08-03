@@ -359,3 +359,5 @@ BestPair.mqh
 Dashboard.mqh
 
 EventManager.mqh
+
+## 19. Dashboard Layout
