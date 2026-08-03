@@ -361,3 +361,23 @@ Dashboard.mqh
 EventManager.mqh
 
 ## 19. Dashboard Layout
+
+```text
+┌─────────────────────────────────────┐
+│ Market Summary                      │
+│ Risk ON 82%                         │
+├─────────────────────────────────────┤
+│ Currency Strength                   │
+│ USD █████                           │
+│ EUR ████                            │
+│ JPY █                               │
+├─────────────────────────────────────┤
+│ Money Flow                          │
+│ Stocks ↑                            │
+│ Gold ↓                              │
+│ Bond ↓                              │
+│ Crypto ↑                            │
+├─────────────────────────────────────┤
+│ Best Pair                           │
+│ EURJPY                              │
+└─────────────────────────────────────┘
