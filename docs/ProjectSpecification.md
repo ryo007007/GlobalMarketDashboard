@@ -577,24 +577,6 @@ Ver4.00
 
 ・Portfolio Analysis
 
-## 用語集（Glossary）
-
-Risk ON
-
-投資家がリスク資産へ資金を移す状態
-
-Risk OFF
-
-安全資産へ資金を移す状態
-
-Money Flow
-
-市場間の資金循環
-
-Confidence
-
-売買シグナルの信頼度
-
 ## 26. Coding Standards
 
 Naming Rules
@@ -657,3 +639,21 @@ Calculate()
 ↓
 
 結果だけ返す
+
+## 用語集（Glossary）
+
+Risk ON
+
+投資家がリスク資産へ資金を移す状態
+
+Risk OFF
+
+安全資産へ資金を移す状態
+
+Money Flow
+
+市場間の資金循環
+
+Confidence
+
+売買シグナルの信頼度
