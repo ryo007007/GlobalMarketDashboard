@@ -387,3 +387,144 @@ src/
 │ Best Pair                           │
 │ EURJPY                              │
 └─────────────────────────────────────┘
+
+Market Summary
+
+↓
+
+Currency Strength
+
+↓
+
+Best Pair
+
+↓
+
+Money Flow
+
+↓
+
+Market Open
+
+↓
+
+Economic Events
+```
+
+## 20. Data Update Policy
+
+通貨強弱
+
+1秒毎
+
+株価指数
+
+5秒毎
+
+Gold
+
+5秒毎
+
+Bond
+
+10秒毎
+
+Economic Event
+
+60秒毎
+
+Market Open
+
+60秒毎
+
+## 21. Symbol Priority
+
+Gold
+
+XAUUSD
+
+↓
+
+GOLD
+
+↓
+
+GOLDmicro
+
+↓
+
+XAUUSD.r
+
+## 22. Settings
+
+Update Interval
+
+Currency Timeframe
+
+Color Theme
+
+Display Mode
+
+Auto Detect Symbols
+
+Show Events
+
+Show Market Open
+
+## 23. Color Rules
+
+Strong Buy
+
+赤
+
+Buy
+
+オレンジ
+
+Neutral
+
+白
+
+Sell
+
+水色
+
+Strong Sell
+
+青
+
+## 24. Future AI Engine
+
+AI Engine
+
+Market Pattern
+
+Money Rotation
+
+Correlation
+
+Probability
+
+Recommendation
+
+## 用語集（Glossary）
+
+Risk ON
+
+投資家がリスク資産へ資金を移す状態
+
+Risk OFF
+
+安全資産へ資金を移す状態
+
+Money Flow
+
+市場間の資金循環
+
+Confidence
+
+売買シグナルの信頼度
+
+Market Regime
+
+市場全体の状態
