@@ -595,6 +595,65 @@ Confidence
 
 売買シグナルの信頼度
 
+## 26. Coding Standards
+
+Naming Rules
+
+Class
+
+CMarketRegime
+
+CCurrencyStrength
+
+Variable
+
+m_ Member
+
+g_ Global
+
+Inp Input
+
+Function
+
+Calculate()
+
+Update()
+
+Draw()
+
+Detect()
+
+File
+
+PascalCase
+
+Comment
+
+日本語可
+
+Header
+
+すべてのmqhに説明を書く
 Market Regime
 
 市場全体の状態
+
+## 27. Interface（役割）
+
+Dashboard
+
+↓
+
+呼び出すだけ
+
+↓
+
+MoneyFlow
+
+↓
+
+Calculate()
+
+↓
+
+結果だけ返す
