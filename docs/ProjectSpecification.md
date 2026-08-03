@@ -640,6 +640,42 @@ Calculate()
 
 結果だけ返す
 
+## 28. Asset Detection Flow
+
+Terminal起動
+
+↓
+
+シンボル一覧取得
+
+↓
+
+Gold検索
+
+↓
+
+Index検索
+
+↓
+
+Crypto検索
+
+↓
+
+Bond検索
+
+↓
+
+Validation
+
+↓
+
+Cache
+
+↓
+
+Engineへ渡す
+
 ## 用語集（Glossary）
 
 Risk ON
