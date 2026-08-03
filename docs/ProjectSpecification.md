@@ -371,24 +371,33 @@ src/
 ## 19. Dashboard Layout
 
 ```text
-┌─────────────────────────────────────┐
-│ Market Summary                      │
-│ Risk ON 82%                         │
-├─────────────────────────────────────┤
-│ Currency Strength                   │
-│ USD █████                           │
-│ EUR ████                            │
-│ JPY █                               │
-├─────────────────────────────────────┤
-│ Money Flow                          │
-│ Stocks ↑                            │
-│ Gold ↓                              │
-│ Bond ↓                              │
-│ Crypto ↑                            │
-├─────────────────────────────────────┤
-│ Best Pair                           │
-│ EURJPY                              │
-└─────────────────────────────────────┘
+┌──────────────────────────────┐
+│ GLOBAL MARKET DASHBOARD      │
+├──────────────────────────────┤
+│ Risk ON        82%           │
+│ Confidence     91%           │
+│ Best Pair EURJPY             │
+├──────────────────────────────┤
+│ Currency Strength            │
+│ USD █████                    │
+│ EUR ████                     │
+│ GBP ███                      │
+│ AUD ██                       │
+│ JPY █                        │
+├──────────────────────────────┤
+│ Money Flow                   │
+│ Stocks      ↑↑               │
+│ Gold        ↓                │
+│ Bond        ↓                │
+│ Crypto      ↑↑↑              │
+├──────────────────────────────┤
+│ Tokyo   OPEN                 │
+│ London  03:12                │
+│ NewYork 09:54                │
+├──────────────────────────────┤
+│ CPI      2h14m               │
+│ FOMC     1d03h               │
+└──────────────────────────────┘
 
 Market Summary
 
