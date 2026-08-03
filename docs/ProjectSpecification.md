@@ -1,5 +1,7 @@
 # Global Market Dashboard Ultimate Edition
 
+Global Market Dashboard Ultimate Edition は、複数の市場を個別に分析するツールではなく、市場間の相互関係と資金循環を一つの画面で可視化する統合マーケット分析プラットフォームを目指す。
+
 **Project** : Global Market Dashboard Ultimate
 
 **Platform** : MetaTrader 5 (MT5)
@@ -493,7 +495,7 @@ Strong Sell
 
 青
 
-## 24. Future AI Engine
+## 24. Future Analytics Engine
 
 AI Engine
 
@@ -506,6 +508,58 @@ Correlation
 Probability
 
 Recommendation
+
+統計
+
+相関
+
+クラスタリング
+
+機械学習
+
+## 25. Development Roadmap
+
+Ver2.11
+
+・Currency Strength
+
+・Best Pair
+
+・Dashboard
+
+・Confidence
+
+Ver2.20
+
+・Money Flow
+
+・Market Regime
+
+・Asset Detection
+
+Ver2.30
+
+・Market Open
+
+・Economic Events
+
+・Display Mode
+
+Ver3.00
+
+・Flow Analysis
+
+・Correlation Engine
+
+・Bond Analysis
+
+Ver4.00
+
+・Analytics Engine
+
+・Prediction
+
+・Portfolio Analysis
 
 ## 用語集（Glossary）
 
