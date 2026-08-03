@@ -49,7 +49,65 @@
 
 全銘柄の合計点数によって、現在の地合い（Risk ON / OFF）を判定します。
 
+# システム詳細設計仕様書 (Detailed Architecture & Roadmap)
+
+---
+
+## 1. Currency Strength Engine（通貨強弱計算）
+
+### 1.1 計算ロジック（Ver2.11 仕様）
+開発のシンプル化とバグ防止、結果の解釈性を最優先とし、全ペア一律の単純加減算を採用します。
+
+* **EURUSD 上昇** ➔ `EUR: +1` / `USD: -1`
+* 対象: **全28通貨ペア（一律 +1 / -1）**
+
+### 1.2 将来拡張構想 (Ver2.20 Roadmap)
+初期バージョンでの安定稼働を確認後、以下のパラメータを追加して精度を向上させます。
+* **重み付け（Weight）の導入**: 
+  * `EURUSD` / `GBPUSD` : Weight 1.0
+  * `AUDUSD` : Weight 0.8
+  * `NZDUSD` : Weight 0.6
+* **ATR / ボラティリティ考慮**: 値動きの大きさに応じたスコア動的加減算
+
+---
+
+## 2. Confidence Engine（確信度・信頼度算出）
+
+各エンジンの判定結果に**「寄与率（Weight%）」**を設定して合算することで、全体スコア（0〜100%）を算出します。
+
+### 2.1 寄与率の内訳（寄与率はパラメーター等で調整可能）
+
+```text
+  Currency Strength 一致率 : 40%
++ Money Flow                : 30%
++ Market Regime             : 20%
++ Momentum                  : 10%
+-----------------------------------
+= Total Confidence         : 0 〜 100% (例: 87%)
+
+
 * **合計スコア ≧ 5.0** ➔ 🟢 **Risk ON (強いリスクオン)**
 * **2.0 ≦ 合計スコア ＜ 5.0** ➔ 🟡 **Weak Risk ON (ややリスクオン)**
 * **-2.0 ＜ 合計スコア ＜ 2.0** ➔ ⚪ **Neutral (拮抗・レンジ)**
 * **合計スコア ≦ -2.0** ➔ 🔴 **Risk OFF (リスクオフ)**
+
+設計ノート: 各エンジンの寄与率は可変（調整可能）な設計としておくことで、将来的なロジック最適化（チューニング）を容易にします。
+3. Market Regime Engine（市場地合いスコアリング）地合い（Risk Sentiment）を Risk Score (0 〜 100) の数値として定量化し、5段階のステータスに分類します。算出されたスコアは Money Flow や Confidence の判定にも連動します。
+3.1 Risk Score 分類スコア範囲ステータス判定内容80 〜 100🔥 Strong Risk ON強いリスクオン（株・クリプト急騰、安全資産売却）60 〜 79🟢 Risk ONリスクオン（買われ傾向）40 〜 59⚪ Neutral拮抗・方向感なし（レンジ状態）20 〜 39🔴 Risk OFFリスクオフ（リスク資産売却、安全資産へ避難）0 〜 19❄️ Strong Risk OFF強いリスクオフ（市場の混乱・現金化圧力）
+4. Market Summary（メインダッシュボード UI）本インジケーターの「顔」となる最重要サマリー表示モジュール。チャート右上等に配置し、市場全体の状況を一目で把握可能にします。
+4.1 UI レイアウトイメージPlaintext
+┌─────────────────────────────────────┐
+│ Market Summary                      │
+│ Risk ON (Score: 62)                 │
+│ Confidence 82%                      │
+├─────────────────────────────────────┤
+│ Best Pair : EURJPY                  │
+│ Strongest : EUR    Weakest : JPY    │
+├─────────────────────────────────────┤
+│ Money Flow                          │
+│ Stocks ↑   Gold ↓   Bond ↓   Crypto ↑│
+└─────────────────────────────────────┘
+5. 段階的実装ロードマップ (Development Roadmap)段階的なリリース（フェーズ分け）により、早期の動作確認と堅牢な完成を実現します。
+🚀 第1段階：コア機能の完成優先 (Ver2.11)[x] 通貨強弱ランキング[x] 通貨色分け[x] 矢印表示[x] 段階的色分け[x] Best Pair 選定[x] Confidence（基礎版）[x] シンボル自動検出[x] GOLD 自動検出📈
+第2段階：分析・サマリー機能の拡張[ ] Market Regime Engine (Risk Score 0-100)[ ] Money Flow Engine[ ] Market Summary (ダッシュボードUI統合)
+🌟 第3段階：外部マクロデータの統合[ ] VIX 指数連動[ ] DXY (ドルインデックス) 連動[ ] Bond (米国債利回り) 連動[ ] Market Open Countdown (市場オープンタイマー)[ ] Economic Events (主要経済指標表示)
