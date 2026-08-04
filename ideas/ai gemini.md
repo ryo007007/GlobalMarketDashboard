@@ -1,15 +1,13 @@
-おはようございます！本日もよろしくお願いいたします！☀️
+ChatGPTからのフィードバック、非常に的確で素晴らしい視点ですね！
 
-素晴らしいロードマップですね！設計フェーズで「ブレない軸」が完成したからこそ、ここからは「設計30%・実装70%」のフェーズへ移行し、1つずつコードとして形にしていくプロセスが非常に楽しみです。
+特に **「各エンジンの Inputs / Outputs / Class Methods の明記」** や **「Purpose / Calculation / Display の構造的分離」** は、午後のコード実装（`.mqh`作成）へスムーズに移行するための橋渡しとして完璧な整理方法です。
 
-特に **`AssetDetection.mqh`** における **Validation（データ取得検証）**, **Availability（非対応時のフォールバック処理）**, **Cache（検索結果の保持）** の考え方は、実運用の堅牢性とパフォーマンスを高める上で非常に極めて重要な設計思想です。ブローカーによって銘柄やヒストリカルデータの有無が異なるMT5環境において、エラーで止めずに「Unavailable」として処理を継続させる設計は完璧です。
-
-昨日の仕様書（Project Specification v0.2）に、ご提案いただいた「26. Asset Detection Flow」を追加し、さらにバージョン（v0.3）と目次構造を更新した決定版Markdownを作成しました！
+ドキュメントバージョンを **`Project Specification v1.0 Draft`** へ引き上げ、Inputs/Outputs、主要クラスメソッド（`CCurrencyStrength`, `CAssetDetection` 等）、将来の拡張章（`Class Diagram`, `Error Handling` 等のプレースホルダー）まで統合した、**実装者が一切迷わない「超プロ仕様」の決定版仕様書**にブラッシュアップしました！
 
 ---
 
-```markdown
 # 🌐 Global Market Dashboard Ultimate Edition
+
 > **Integrated Market Analysis Platform for MetaTrader 5**
 
 ---
@@ -17,119 +15,237 @@
 ## 📌 Project Metadata
 
 | Item | Details |
-| :--- | :--- |
+| --- | --- |
 | **Project Name** | Global Market Dashboard Ultimate |
 | **Platform** | MetaTrader 5 (MT5) |
 | **Language** | MQL5 |
 | **Repository** | `GlobalMarketDashboard` |
-| **Current Version** | `2.11 Ultimate` (Development) |
-| **Document Version** | Project Specification v0.3 |
+| **Document Version** | **Project Specification v1.0 Draft** |
+| **Current Target** | `Ver 2.11 Ultimate` (Development) |
 | **Author** | Ryoutarou Kadono |
 | **Status** | In Development |
+
+---
+
+## 📋 Table of Contents
+
+1. [Project Overview & Philosophy](https://www.google.com/search?q=%231-project-overview--philosophy)
+2. [System Architecture & Data Flow](https://www.google.com/search?q=%232-system-architecture--data-flow)
+3. [Core Engine Specifications](https://www.google.com/search?q=%233-core-engine-specifications)
+* 3.1 [Asset Detection Engine](https://www.google.com/search?q=%2331-asset-detection-engine)
+* 3.2 [Currency Strength Engine](https://www.google.com/search?q=%2332-currency-strength-engine)
+* 3.3 [Best Pair Engine](https://www.google.com/search?q=%2333-best-pair-engine)
+* 3.4 [Confidence Engine](https://www.google.com/search?q=%2334-confidence-engine)
+* 3.5 [Market Regime Engine](https://www.google.com/search?q=%2335-market-regime-engine)
+* 3.6 [Money Flow & Liquidity Engine](https://www.google.com/search?q=%2336-money-flow--liquidity-engine)
+
+
+4. [Asset Detection Flow & Lifecycle](https://www.google.com/search?q=%234-asset-detection-flow--lifecycle)
+5. [UI & Display Specifications](https://www.google.com/search?q=%235-ui--display-specifications)
+6. [System Directory & Module Structure](https://www.google.com/search?q=%236-system-directory--module-structure)
+7. [Performance & Update Policy](https://www.google.com/search?q=%237-performance--update-policy)
+8. [Color System & Rules](https://www.google.com/search?q=%238-color-system--rules)
+9. [Development Roadmap & Milestones](https://www.google.com/search?q=%239-development-roadmap--milestones)
+10. [Coding & Architecture Standards](https://www.google.com/search?q=%2310-coding--architecture-standards)
+11. [Future Architecture Extensions (Draft)](https://www.google.com/search?q=%2311-future-architecture-extensions-draft)
+12. [Glossary](https://www.google.com/search?q=%23-glossary)
 
 ---
 
 ## 1. Project Overview & Philosophy
 
 ### 1.1 ビジョン（開発目的）
-本ツールは、単なるMT5用のインジケーターにとどまりません。FX・株式・Gold・暗号資産・債券など、
-独立して扱われがちな各市場をクロスアセット（横断的）に統合分析し、**「市場全体の資金循環（マネーフロー）」を一つの画面で可視化する
-統合マーケット分析プラットフォーム**を目指します。
+
+本ツールは、単なるMT5用のインジケーターにとどまりません。FX・株式・Gold・暗号資産・債券など、独立して扱われがちな各市場をクロスアセット（横断的）に統合分析し、**「市場全体の資金循環（マネーフロー）」を一つの画面で可視化する統合マーケット分析プラットフォーム**を目指します。
 
 > **💡 コアコンセプト**
 > * 「相場を見る」のではなく **「世界のお金の流れを見る」**
 > * 市場の状態そのものを多角的な数値として定量化する **「Market Analytics Engine」**
+> 
+> 
 
 ---
 
-## 2. System Architecture & Flow
+## 2. System Architecture & Data Flow
 
-各エンジン層が独立してデータ処理を行い、描画層へ連携する堅牢なパイプライン設計を採用しています。
-
-### 2.1 全体処理パイプライン
+各エンジン層が独立してデータ処理を行い、描画層へ連携する疎結合なパイプライン設計を採用しています。
 
 ```text
-               [ Data Layer ]
+                     [ Data Layer ]
          Asset Detection (自動判定・キャッシュ)
-                    │
-                    ▼
-            [ Analysis Layer ]
- ┌──────────────────────────────────────┐
- │ 1. Currency Strength Engine          │
- │ 2. Market Regime Engine (Risk Score) │
- │ 3. Money Flow Engine                 │
- │ 4. Confidence Engine                 │
- │ 5. Best Pair Engine                  │
- └──────────────────┬───────────────────┘
-                    │
-                    ▼
-          [ Presentation Layer ]
- ┌──────────────────────────────────────┐
- │ Dashboard UI / Multi-Panel Display   │
- └──────────────────────────────────────┘
+                            │
+                            ▼
+                    [ Analysis Layer ]
+ ┌────────────────────────────────────────────────────────┐
+ │ 1. CCurrencyStrength : 28ペア相対強弱スコア計算       │
+ │ 2. CBestPair         : 最強 vs 最弱ペアの自動選定      │
+ │ 3. CConfidence       : 多角的指標の寄与率合算 (0-100%)│
+ │ 4. CMarketRegime     : Risk Score (0-100) & 地合い判定│
+ │ 5. CMoneyFlow        : アセット間資本流出入分析       │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+                  [ Presentation Layer ]
+ ┌────────────────────────────────────────────────────────┐
+ │ CDashboard / Multi-Panel Display (UI統括・差分描画)   │
+ └────────────────────────────────────────────────────────┘
 
 ```
 
 ---
 
-## 3. Core Engine Detailed Specifications
+## 3. Core Engine Specifications
 
 ---
 
-### 3.1 🔀 Currency Strength Engine
+### 3.1 🔍 Asset Detection Engine (`CAssetDetection`)
+
+ブローカーごとのシンボル名表記揺れを自動識別・検証し、システム共通の識別コードへと正規化します。
+
+* **3.1.1 Purpose**: ブローカー依存のシンボル表記差分（`XAUUSD`, `GOLDmicro` 等）を透過的に吸収する。
+* **3.1.2 Inputs**:
+* Terminal Symbol List（気配値表示および全提供銘柄リスト）
+* Aliases Table（定義済み優先度検索テーブル）
+
+
+* **3.2.3 Outputs**:
+* Normalized Symbol Names (`string`)
+* Availability Flags (`bool`)
+
+
+* **3.1.4 Class Interface**:
+
+```cpp
+class CAssetDetection
+{
+private:
+   string   m_cachedGoldSymbol;
+   bool     m_isGoldAvailable;
+   // 他アセットのキャッシュ変数...
+
+public:
+            CAssetDetection();
+   bool     DetectAll();
+   string   GetGoldSymbol()    const { return m_cachedGoldSymbol; }
+   bool     IsGoldAvailable()  const { return m_isGoldAvailable; }
+   // Validate / Cache 内部メソッド...
+};
+
+```
+
+---
+
+### 3.2 🔀 Currency Strength Engine (`CCurrencyStrength`)
 
 全28通貨ペアの値動きから主要7通貨の相対的な強弱関係を算出します。
 
-* **対象通貨 (7 Currency)**: `USD`, `EUR`, `JPY`, `GBP`, `CHF`, `AUD`, `CAD`
-* **対象ペア (28 Pairs)**: 主要メジャー・クロス通貨ペア全28種類
-* **算出ロジック (Ver2.11)**:
-* 一定時間（タイムフレーム）における上昇/下降判定
-* 上昇時：分子側通貨 `+1` / 下降時：分母側通貨 `+1`
+* **3.2.1 Purpose**: FX市場における各通貨の買われ・売られ状態をリアルタイムで数値化する。
+* **3.2.2 Inputs**:
+* 28 Currency Pairs Price Data
+* Target Timeframe (`ENUM_TIMEFRAMES`)
 
 
-* **表示方式**: 強度順に 1位〜7位 をランキング化し、ダイナミックに色分け
-* 🔴 **最強**: 赤系 (Strong Buy)
-* 🔵 **最弱**: 青系 (Strong Sell)
+* **3.2.3 Calculation**:
+* 各ペアの上昇/下降判定（上昇: 分子 `+1` / 下降: 分母 `+1`）
+* 合計スコアに基づき 1位〜7位 へソート
 
 
-* **将来拡張 (Ver2.20)**: 通貨ペアごとの重み付け（`Weight`）、`ATR`・ボラティリティ加算機能の実装
+* **3.2.4 Outputs**:
+* Currency Rank List (`1st ~ 7th`)
+* Strength Scores (`double`)
+* UI Color Map (`color`)
+
+
+* **3.2.5 Class Interface**:
+
+```cpp
+class CCurrencyStrength
+{
+private:
+   double   m_scores[7];
+   int      m_rankings[7];
+
+public:
+            CCurrencyStrength();
+   bool     Calculate(ENUM_TIMEFRAMES tf);
+   double   GetScore(string currency) const;
+   int      GetRank(string currency)  const;
+};
+
+```
 
 ---
 
-### 3.2 🌊 Money Flow & Liquidity Engine
+### 3.3 🏆 Best Pair Engine (`CBestPair`)
 
-多角的なアセットクラス間の資金流出入と、機関投資家の「現金化（キャッシュ化）圧力」を判定します。
+`Currency Strength Engine` から算出された「最強通貨」と「最弱通貨」を瞬時に組み合わせ、現在最も強いトレンドが期待できる通貨ペアを自動抽出します。
 
-#### 対象市場アセット
+* **3.3.1 Purpose**: トレード効率が最も高い通貨ペアを瞬時に提示する。
+* **3.3.2 Inputs**:
+* Currency Ranks (`CCurrencyStrength` から取得)
 
-* **FX** / **Gold & Silver** / **株価指数** / **暗号資産** / **債券**
 
-#### 表示ルール
+* **3.3.3 Calculation**:
+* 最強通貨 (Rank 1) と 最弱通貨 (Rank 7) のペアリングおよび売買方向の決定
 
-* `↑↑` / `↑` : 資金流入（緑）
-* `→` : 中立（灰色）
-* `↓↓` / `↓` : 資金流出（赤）
 
-#### 💧 流動性判定（Liquidity Score）
+* **3.3.4 Outputs**:
+* Best Pair Name (例: `"EURJPY"`)
+* Direction Indicator (例: `"BUY"` / `"SELL"`)
 
-* **Cash Preference (現金化圧力の急増)**: `Gold ↑` + `Bond ↑` + `JPY ↑` + `VIX ↑`
-* **Risk-Seeking (リスク資産への流入)**: `Stocks/NASDAQ ↑` + `Crypto/BTC ↑` + `Gold ↓` + `JPY ↓`
+
+* **3.3.5 Class Interface**:
+
+```cpp
+class CBestPair
+{
+public:
+   string   GetBestPair(const CCurrencyStrength &csEngine, string &outDirection);
+};
+
+```
 
 ---
 
-### 3.3 🛡️ Market Regime Engine
+### 3.4 🎯 Confidence Engine (`CConfidence`)
 
-マクロ市場の主要9指標（`Inputs`）の状態から総合的なリスクセンチメントを測定し、**`Risk Score (0 〜 100)`** を算出します。
+各エンジンの判定結果を指定された寄与率パラメーターで合算し、現在の相場環境に対する総合的な確信度（`0 〜 100%`）を出力します。
 
-#### データインプット
+* **3.4.1 Purpose**: エントリーや分析における市場環境の整合性（信頼度）を数値化する。
+* **3.4.2 Inputs & Weights**:
+* Currency Strength 一致率 : `40%`
+* Money Flow 方向性        : `30%`
+* Market Regime Risk Score  : `20%`
+* Momentum                  : `10%`
 
-`SP500`, `NASDAQ`, `US10Y`, `Gold`, `USDJPY`, `BTC`, `ETH`, `VIX`, `DXY`
 
-#### Risk Score 区分テーブル
+* **3.4.3 Outputs**:
+* Confidence Score (`0 〜 100%`)
+
+
+* **3.4.4 Class Interface**:
+
+```cpp
+class CConfidence
+{
+public:
+   int      CalculateConfidence(double csScore, double mfScore, int riskScore);
+};
+
+```
+
+---
+
+### 3.5 🛡️ Market Regime Engine (`CMarketRegime`)
+
+マクロ市場の主要9指標の状態から総合的なリスクセンチメントを測定し、**`Risk Score (0 〜 100)`** を算出します。
+
+* **3.5.1 Inputs**: `SP500`, `NASDAQ`, `US10Y`, `Gold`, `USDJPY`, `BTC`, `ETH`, `VIX`, `DXY`
+* **3.5.2 Outputs & Classification**:
 
 | Score | Status | 判定テキスト | 市場状況 |
 | --- | --- | --- | --- |
-| **80–100** | 🔥 **Strong Risk ON** | 強いリスクオン | 株・クリプト急騰、安全資産（円・金）売却 |
+| **80–100** | 🔥 **Strong Risk ON** | 強いリスクオン | 株・クリプト急騰、安全資産売却 |
 | **60–79** | 🟢 **Risk ON** | リスクオン | リスク資産選好、トレンド継続 |
 | **40–59** | ⚪ **Neutral** | 中立・レンジ | 銘柄間で強弱拮抗、方向感なし |
 | **20–39** | 🔴 **Risk OFF** | リスクオフ | リスク資産売却、安全資産へ避難 |
@@ -137,111 +253,58 @@
 
 ---
 
-### 3.4 🎯 Confidence Engine
+### 3.6 🌊 Money Flow & Liquidity Engine (`CMoneyFlow`)
 
-各エンジンの判定結果を指定された寄与率（可変パラメーター）で合算し、現在の相場環境に対する総合的な確信度（`0 〜 100%`）を出力します。
+多角的なアセットクラス間の資金流出入と、機関投資家の「現金化（キャッシュ化）圧力」を判定します。
 
-#### 寄与率内訳（可変・カスタマイズ可能）
+* **3.6.1 Target Assets**: FX / Gold & Silver / Equity Index / Crypto / Bond
+* **3.6.2 Output Indicators**: `↑↑` (強い流入), `↑` (流入), `→` (中立), `↓` (流出), `↓↓` (強い流出)
+* **3.6.3 Liquidity Score (現金化圧力)**:
+* **Cash Preference**: `Gold ↑` + `Bond ↑` + `JPY ↑` + `VIX ↑` ➔ 有事の現金化シナリオの検知
 
-```text
-  Currency Strength 一致率 : 40%
-+ Money Flow                : 30%
-+ Market Regime (Risk Score): 20%
-+ Momentum                  : 10%
------------------------------------
-= Total Confidence         : 0 〜 100% (例: 91%)
 
-```
 
 ---
 
-### 3.5 🏆 Best Pair Engine
+## 4. Asset Detection Flow & Lifecycle
 
-`Currency Strength Engine` から算出された「最強通貨」と「最弱通貨」を瞬時に組み合わせ、
-現在最も強いトレンドが期待できる通貨ペアを自動抽出します。
-
-* **例**: `EUR`（最強：+1.0） × `JPY`（最弱：-1.0） ➔ 🟢 **Best Pair: EURJPY**
-
----
-
-### 3.6 🔍 Asset Detection Specifications
-
-接続するブローカーごとの銘柄表記揺れ（シンボル名）を自動判定・正規化します。
-
-#### 優先順位ルール（Symbol Priority）
-
-1. **Gold**: `XAUUSD` ➔ `GOLD` ➔ `GOLDmicro` ➔ `GOLD.r` ➔ `XAUUSD.a`
-2. **Equity Index**: `SPX500` / `US500` / `US30` / `NAS100` / `JP225` / `GER40` / `UK100`
-3. **Crypto**: `BTCUSD` / `BTCUSDT` / `ETHUSD`
-4. **Bond**: `US10Y` / `US30Y`
-
----
-
-## 4. Asset Detection Flow (詳細動作設計)
-
-システム起動時および初期化処理における `AssetDetection.mqh` の内部処理フローです。高速化と堅牢性を兼ね備えた 5 段階パイプライン構造を採用します。
-
-### 4.1 処理パイプライン概要
+システム起動時および初期化処理における `AssetDetection.mqh` の内部ライフサイクルです。
 
 ```text
 [ Terminal 起動 / OnInit ]
            │
            ▼
-   1. Symbol Scan (ブローカー提供銘柄の一括検索)
+   1. Symbol Scan     : ブローカー提供銘柄の一括検索
            │
            ▼
-   2. Detection (カテゴリ別エイリアス照合)
-      (Gold / Index / Crypto / Bond)
+   2. Detection       : カテゴリ別エイリアス照合 (Gold/Index/Crypto/Bond)
            │
            ▼
-   3. Validation (データ取得可能性の検証)
+   3. Validation      : SymbolInfoDouble() 等による価格取得確認
            │
            ▼
-   4. Availability (非対応銘柄のステータス割り当て)
+   4. Availability    : 未対応銘柄への Unavailable (N/A) フラグ付与
            │
            ▼
-   5. Cache (検索結果のメモリ保持)
+   5. Cache           : 検出結果のメモリ保持 (毎秒の再検索を排除)
            │
            ▼
- [ Analysis Engine へ参照引き渡し ]
+ [ Engine & UI へ参照引き渡し ]
 
 ```
-
-### 4.2 段階別詳細仕様
-
-1. **Detect (自動検出)**
-* ブローカーごとに異なるシンボル名（例: `XAUUSD`, `GOLDmicro` 等）を定義済みの優先度リストから検索・特定します。
-
-
-2. **Validation (検証)**
-* 検出されたシンボルが `SymbolInfoDouble()` 等で正常に価格データを取得できるかチェックします。
-
-
-3. **Availability (利用可能性フラグ)**
-* ブローカー側で取引不可、またはデータが取得できない銘柄があった場合、システムエラーで停止させるのではなく **`Unavailable`** フラグを立てて処理をスキップします。（UI上には「N/A」等で安全に表示）
-
-
-4. **Cache (キャッシュ化)**
-* 初回検出結果をクラス内部の変数（構造体配列等）に保持します。毎秒の検索処理（オーバーヘッド）を排除し、描画・計算パフォーマンスを劇的に向上させます。
-
-
 
 ---
 
 ## 5. UI & Display Specifications
 
-### 5.1 Display Modes（画面表示モード）
+### 5.1 Display Modes
 
-1. **Mode 1 (Chart)**: チャートメイン表示（MA, BB, Pivot等のテクニカル指標）
+1. **Mode 1 (Chart)**: チャートメイン表示（MA, BB, Pivot等）
 2. **Mode 2 (Dashboard)**: 分析パネルのみを全画面表示
 3. **Mode 3 (Hybrid)**: チャート画面 ＋ ダッシュボードパネルの併用（推奨）
 4. **Mode 4 (Minimal)**: 強弱ランキング等、最低限の情報のみを表示する省スペースモード
 
----
-
 ### 5.2 🖼️ Dashboard Layout (Ver2.11 完成イメージ)
-
-ダッシュボード右上に配置される本プラットフォームのメインインターフェースです。
 
 ```text
 ┌──────────────────────────────┐
@@ -276,28 +339,26 @@
 
 ---
 
-## 6. System Architecture & Directory Structure
+## 6. System Directory & Module Structure
 
 大規模開発および保守性を確保するため、`Engines/`, `Display/`, `Core/` の3軸でモジュールをディレクトリカプセル化します。
-
-### 📁 モジュールツリー構成 (`src/`)
 
 ```text
 src/
 └── Modules/
-    ├── Core/                   // [基盤・ユーティリティ (第1段階)]
+    ├── Core/                   // [基盤・ユーティリティ (第1フェーズ)]
     │   ├── AssetDetection.mqh   // ブローカー表記揺れ自動検出・キャッシュ
     │   ├── Logger.mqh           // 初期化・検出・エラー・ロード等のログ管理
     │   └── Utils.mqh            // 共通関数・配列操作・型変換
     │
-    ├── Engines/                // [計算・判定ロジック (第2段階)]
+    ├── Engines/                // [計算・判定ロジック (第2フェーズ)]
     │   ├── CurrencyStrength.mqh // 通貨強弱スコア計算
     │   ├── BestPair.mqh         // 最強vs最弱ペア自動選定
     │   ├── Confidence.mqh       // 寄与率合算・確信度計算
     │   ├── MarketRegime.mqh     // Risk Score & 地合い判定
     │   └── MoneyFlow.mqh        // 資金流出入・マネーフロー分析
     │
-    └── Display/                // [UI描画・描画制御 (第3段階)]
+    └── Display/                // [UI描画・描画制御 (第3フェーズ)]
         ├── Dashboard.mqh        // GUI全体の統括制御
         ├── SummaryPanel.mqh     // Market Summary 描画
         ├── RankingPanel.mqh     // 強弱ランキングパネル描画
@@ -340,9 +401,10 @@ src/
 
 ### 🚀 Ver2.11 (実装ターゲット)
 
-1. **Core構築**: `AssetDetection.mqh`, `Logger.mqh`, `Utils.mqh`
-2. **Engines構築**: `CurrencyStrength.mqh`, `BestPair.mqh`, `Confidence.mqh`
-3. **Display構築**: `Dashboard.mqh` UIでの基本表示
+* [x] 仕様書 v1.0 Draft の確立
+* [ ] **Core構築**: `AssetDetection.mqh`, `Logger.mqh`, `Utils.mqh`
+* [ ] **Engines構築**: `CurrencyStrength.mqh`, `BestPair.mqh`, `Confidence.mqh`
+* [ ] **Display構築**: `Dashboard.mqh` 基本UIでの動作確認
 
 ---
 
@@ -350,26 +412,33 @@ src/
 
 ### 10.1 命名規則 (Naming Conventions)
 
-* **クラス名**: 先頭に `C` を付与（例: `CAssetDetection`, `CCurrencyStrength`）
-* **メンバー変数**: 先頭に `m_` を付与（例: `m_goldSymbol`）
-* **グローバル変数**: 先頭に `g_` を付与（例: `g_logger`）
-* **入力パラメータ**: 先頭に `Inp` を付与（例: `InpUpdateInterval`）
+* **クラス名**: 先頭に `C`（例: `CAssetDetection`, `CCurrencyStrength`）
+* **メンバー変数**: 先頭に `m_`（例: `m_goldSymbol`）
+* **グローバル変数**: 先頭に `g_`（例: `g_logger`）
+* **入力パラメータ**: 先頭に `Inp`（例: `InpUpdateInterval`）
 * **主要メソッド**: 役割に応じた動詞で統一（`Detect()`, `Validate()`, `Calculate()`, `Draw()`）
 
 ---
 
-## 📖 用語集 (Glossary)
+## 11. Future Architecture Extensions (Draft)
 
-* **Asset Detection**: ブローカー固有の銘柄名を識別・検証し、全エンジン共通のフォーマットに正規化する層。
-* **Availability**: 外部データ（債券や一部暗号資産等）が存在しない場合にシステム停止を防ぐフォールバック設計。
-* **Risk ON / Risk OFF**: グローバル資金がリスク資産/安全資産へ流れる局面の定義。
+プロジェクトの成長に備え、将来的に順次追記・拡張する章のプレースホルダーです。
 
-```
+* **29. Class Diagram**: 全クラスの依存関係図説
+* **30. Data Flow**: イベント駆動（`OnTimer` / `OnTick`）時のデータ流通図
+* **31. Error Handling**: エラーコード定義とリカバリー手順
+* **32. Performance Benchmark**: CPU/メモリ使用量の許容上限規定
+* **33. Test Plan**: 単体テストおよび各種ブローカーでの結合テスト計画
+* **34. Release Checklist**: 本番ビルド前のチェック項目
+* **35. Known Limitations**: プラットフォーム固有の制限事項メモ
 
 ---
 
-### 🚀 午後からのアプローチ
-設計書への落とし込みがこれで完了しました！
-午後からは予定通り、最も土台となる **`src/Modules/Core/AssetDetection.mqh`** のクラス設計とMQL5コードの実装から始めていきましょう！準備が整いましたら、いつでも声をおかけください！
+## 📖 Glossary
 
-```
+* **Asset Detection**: ブローカー固有の銘柄名を識別・検証し、全エンジン共通のフォーマットに正規化する層。
+* **Availability**: 外部データが存在しない場合にシステム停止を防ぐフォールバック設計。
+* **Money Flow**: アセット間を移動するグローバルな資本の流出入・循環。
+* **Confidence**: 複数エンジンの判定の一致率から算出される売買シグナルの確信度。
+
+---
