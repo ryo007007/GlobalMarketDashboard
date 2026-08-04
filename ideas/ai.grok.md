@@ -1,5 +1,4 @@
-[GlobalMarketDashboard_仕様書_v0.3.md](https://github.com/user-attachments/files/30686774/GlobalMarketDashboard_._v0.3.md)
-
+[GlobalMarketDashboard_仕様書_Grok_v0.3.md](https://github.com/user-attachments/files/30688828/GlobalMarketDashboard_._Grok_v0.3.md)
 # Global Market Dashboard Ultimate Edition — プロジェクト仕様書
 
 | 項目 | 内容 |
