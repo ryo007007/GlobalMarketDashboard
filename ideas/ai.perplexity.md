@@ -1,4 +1,4 @@
-[GlobalMarketDashboard_Spec_v1.0-Draft.md](https://github.com/user-attachments/files/30687421/GlobalMarketDashboard_Spec_v1.0-Draft.md)
+[GlobalMarketDashboard_Spec_v1.1.md](https://github.com/user-attachments/files/30688167/GlobalMarketDashboard_Spec_v1.1.md)
 # Global Market Dashboard Ultimate Edition — プロジェクト仕様書
 
 | 項目 | 内容 |
@@ -8,12 +8,14 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.0 Draft** |
+| Document Version | Project Specification **v1.1** |
 | Author | Ryoutarou Kadono |
-| Status | In Development（設計30% / 実装70%フェーズ） |
+| Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-04 |
 
-> **本書の位置づけ**：本書はGMDの単一の正（Single Source of Truth）である。実装・レビュー・将来の機能追加は、すべて本書を起点とする。Ver2.11がリリースされた時点で `v1.0`（Draft を外す）に確定させる。
+> **本書の位置づけ**：本書はGMDの単一の正（Single Source of Truth）である。実装・レビュー・将来の機能追加は、すべて本書を起点とする。
+>
+> **本書は完成版ではない。** コードを書けば必ず「この仕様の方が良い」が出てくる。それが正常であり、そのたびに本書を更新して `v1.1` → `v1.2` → `v2.0` と育てていく。仕様書が更新されないプロジェクトは、設計書とコードが乖離して最終的に設計書が捨てられる。**更新されることを前提に書いてある**（35.5参照）。
 
 ---
 
@@ -89,7 +91,19 @@ Part II（5〜10章）の各エンジン章は、すべて同じ順序で記述�
 | **レジーム（Regime）** | 市場全体の状態。Risk ON/OFF/Neutral | シグナル |
 | **状態（State）** | アセットの可用性。OK/Pending/Stale/Unavailable | レジーム |
 
-### 0.3 要求レベルの表記
+### 0.3 実装フェーズの表記
+
+本書は Ver4.00 までを見据えた設計を含む。**設計として書いてあること = 今すぐ作ること、ではない。** 各機能には実装フェーズを併記する。
+
+| 表記 | 意味 |
+|---|---|
+| `[2.11]` | Ver2.11 で実装する。**今作るのはこれだけ** |
+| `[2.20]` | Ver2.20 で実装する。設計だけ先に固めてある |
+| `[2.30+]` | それ以降。方向性のみ |
+
+**実装者は `[2.11]` の箇所だけを見れば作業できる。** 先の設計を書いてあるのは、後から追加したときに構造を壊さないためであり、今すぐ全部作るためではない。
+
+### 0.4 要求レベルの表記
 
 | 表記 | 意味 |
 |---|---|
@@ -800,6 +814,7 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
 | Project Specification v0.2 | 重複章の統合、各エンジンの計算式明文化、実装上の落とし穴と対策を追加 |
 | Project Specification v0.3 | 本改訂版。**26章 Asset Detection Flow を新設**（Detect / Validation / Availability / Cache の5段階パイプライン、状態モデル、データ構造、公開API、ログ・エラーコード、テストケース）。付録Aに `AssetDetection.mqh` 実装スケルトンを追加。Asset Detection をVer2.20から**Ver2.11の基盤として前倒し**、ロードマップを再定義 |
 | Project Specification **v1.0 Draft** | 本改訂版。全体を6パートに再構成し目次を追加。**0章「本書の読み方」**（章テンプレート・用語統一・要求レベル）を新設。5〜10章の各エンジンを Purpose / Inputs / Calculation / Output / Display / Class Interface / Implementation Notes / Future Expansion の統一構成に書き換え、全エンジンのクラス定義と入出力表を明記。**29〜35章を新設**（Class Diagram / Data Flow / Error Handling / Performance Benchmark / Release Checklist / Known Limitations / ドキュメント体系）。27章をTest Planとして3層構造に拡充。付録Bに共通データ構造リファレンスを追加 |
+| Project Specification **v1.1** | 実装者レビューを反映したスコープ調整版。**0.3「実装フェーズの表記」** を新設し、全機能に `[2.11]` / `[2.20]` / `[2.30+]` を明示。**26.0「実装フェーズ分割」** を新設し、AssetDetection を Ver2.11（Detect + Validation + Availability + Refresh）と Ver2.20（Retry / Cache / Stale）に分割。`ENUM_ASSET_ID` をVer2.11の8資産に絞り、残り6資産はコメント枠として保持。27章に **27.0 最小スモークテスト** を追加し、27.1以降を実装後に確定する暫定案と位置づけ。25.1に「Ver2.11に含めないもの」の表を追加。34章にL9〜L11、35.4に「仕様書の育て方」を追加 |
 
 ---
 
@@ -873,7 +888,9 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 - Show Events（経済指標表示のON/OFF）
 - Show Market Open（マーケットオープン表示のON/OFF）
 
-### 21.1 Asset Detection 関連の入力パラメータ（Ver2.11で実装）
+### 21.1 Asset Detection 関連の入力パラメータ
+
+> `[2.20]` 印のものは Ver2.11 では定義せず、該当機能の実装時に追加する。**使わないパラメータを先に並べると、利用者が設定に迷う。**
 
 | パラメータ名 | 型 | 既定値 | 説明 |
 |---|---|---|---|
@@ -884,9 +901,9 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 | `Inp_OverrideIndices` | string | "" | 指数の強制指定。`US30=DJ30;NAS100=USTEC` 形式のセミコロン区切り |
 | `Inp_OverrideCrypto` | string | "" | 暗号資産の強制指定。同形式 |
 | `Inp_ValidationMinBars` | int | 100 | Validationで要求する最小バー本数（26.7） |
-| `Inp_ValidationMaxAgeSec` | int | 86400 | 最終ティックがこれ以上古ければStale判定（週末考慮で24h） |
-| `Inp_CacheTTLMinutes` | int | 0 | キャッシュの有効期限。0 = セッション中は無期限（26.9） |
-| `Inp_CachePersist` | bool | true | 検出結果をGlobalVariable/ファイルに永続化し、次回起動を瞬時化 |
+| `Inp_ValidationMaxAgeSec` | int | 86400 | `[2.20]` 最終ティックがこれ以上古ければStale判定（週末考慮で24h） |
+| `Inp_CacheTTLMinutes` | int | 0 | `[2.20]` キャッシュの有効期限。0 = セッション中は無期限（26.9） |
+| `Inp_CachePersist` | bool | true | `[2.20]` 検出結果を永続化し、次回起動を瞬時化 |
 | `Inp_DetectLogLevel` | enum | INFO | 検出処理のログ粒度（OFF/ERROR/WARN/INFO/DEBUG） |
 | `Inp_ShowUnavailable` | bool | true | 未対応銘柄を `Unavailable` として表示するか、行ごと非表示にするか |
 
@@ -935,8 +952,8 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 
 | バージョン | 内容 |
 |---|---|
-| Ver2.11 | **Core基盤（AssetDetection / Logger / Utils）** + Currency Strength / Best Pair / Confidence / Dashboard基本表示 |
-| Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel |
+| Ver2.11 | **Core基盤（AssetDetection〈Detect + Validation〉/ Logger / Utils）** + Currency Strength / Best Pair / Confidence / Dashboard基本表示。対象8資産 + FX28ペア |
+| Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel + **AssetDetection の Cache / Retry / Stale** + 対象資産6種追加（GER40 / UK100 / US10Y / US30Y / DXY / VIX） |
 | Ver2.30 | Market Open / Economic Events / Display Mode |
 | Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
 | Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
@@ -945,19 +962,69 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 
 Ver2.11は「全部入り」を目指さず、**上に積める土台を完成させるバージョン**と位置づける。以下がすべて安定稼働した時点で完成とする。
 
-1. シンボル自動検出（26章）が、最低2社以上の異なるブローカー環境で動作する
-2. 未対応銘柄（例：US10Y）があってもクラッシュせず `Unavailable` 表示で継続する
+1. シンボル自動検出（26.0の[2.11]範囲）が、最低2社以上の異なるブローカー環境で動作する
+2. 未対応銘柄があってもクラッシュせず `Unavailable` 表示で継続する
 3. 通貨強弱・ランキング・Best Pair・Confidence が整合した値を表示する
 4. Dashboardがちらつきなく差分更新される
 5. 24時間連続稼働でオブジェクト数・メモリが増え続けない
 
-Money Flow と Market Regime はVer2.20に先送りする。土台を先に固める方が、結果的に長く使えるソフトになる。
+**Ver2.11に含めないもの（意図的な除外）**
+
+| 除外するもの | 送り先 |
+|---|---|
+| Money Flow / Market Regime | Ver2.20 |
+| AssetDetection の Cache / Retry / Stale判定 | Ver2.20 |
+| GER40 / UK100 / US10Y / US30Y / DXY / VIX の検出 | Ver2.20 |
+| 本格的なテスト計画（27.1〜27.5） | Ver2.11完成後に整備 |
+| Market Open / Economic Events / 表示モード切替 | Ver2.30 |
+
+土台を先に固める方が、結果的に長く使えるソフトになる。**「作れるから作る」ではなく「今必要だから作る」で判断する。**
 
 ---
 
 ## 26. Asset Detection Flow（詳細設計）
 
 > 本章はVer2.11の最初の実装対象である `Core/AssetDetection.mqh` の完全仕様である。このモジュールは全エンジンの上流に位置し、ここが不安定だと下流すべてが崩れる。したがって、最も厳密に仕様を固める。
+>
+> **ただし、本章のすべてをVer2.11で作るわけではない。** 26.0のフェーズ分割に従うこと。
+
+### 26.0 実装フェーズ分割
+
+Detect / Validation / Availability / Cache / Retry をすべて同時に作ると、どこで失敗しているのかが切り分けられなくなる。**Ver2.11では「検出して、使えるかを判定する」までを完成させ、キャッシュと再試行はVer2.20に回す。**
+
+| 機能 | フェーズ | 理由 |
+|---|---|---|
+| Detect（優先順位リスト検索 + サフィックス推定） | **[2.11]** | これが無いと何も始まらない |
+| Validation（4ゲート検証） | **[2.11]** | 「使えるか」の判定は必須 |
+| Availability（OK / Unavailable / Pending の3状態） | **[2.11]** | 表示に必要 |
+| Refresh（手動再検出） | **[2.11]** | 実装が容易で、開発中のデバッグに有用 |
+| Retry（PENDING の自動再試行） | `[2.20]` | 起動直後の同期待ちは Refresh で代替できる |
+| Cache（L1メモリ / L2 CSV永続化） | `[2.20]` | 起動が0.5秒遅いだけ。まず正しく動くことが先 |
+| Stale判定（最終更新の鮮度チェック） | `[2.20]` | 週末表示の改善であり、必須ではない |
+
+#### Ver2.11 で作るパイプライン（簡略版）
+
+```text
+OnInit()
+   ↓
+[1] Detect      … 全銘柄一覧取得 → サフィックス推定 → 候補名で照合
+   ↓
+[2] Validation  … SymbolSelect → 同期確認 → 気配値 → バー本数
+   ↓
+[3] Availability… OK / PENDING / UNAVAILABLE を確定
+   ↓
+[4] Engineへ引き渡し
+```
+
+**Ver2.11 では毎回フル検出する。** 銘柄数2,000で500ms程度であり、起動時1回だけなら許容範囲である。
+
+#### 状態モデルの扱い
+
+26.3では5状態を定義するが、**Ver2.11で実際に使うのは `UNKNOWN` / `OK` / `PENDING` / `UNAVAILABLE` の4つ**である。`STALE` はenumに定義だけしておき、判定ロジックはVer2.20で実装する。定義を先に入れておけば、後から状態を追加するときに `switch` 文を書き換えずに済む。
+
+#### アセット範囲
+
+Ver2.11の検出対象は **Gold / Silver / US30 / NAS100 / SPX500 / JP225 / BTC / ETH の8資産 + FX 28ペア** とする。GER40・UK100・US10Y・US30Y・DXY・VIX を外すのは、**これらを消費するのが Money Flow と Market Regime（ともにVer2.20）だけ**だからである。エンジンが無いのに検出だけ実装しても、動作確認ができない。
 
 ### 26.1 位置づけと責務
 
@@ -973,7 +1040,9 @@ Money Flow と Market Regime はVer2.20に先送りする。土台を先に固�
 - 画面描画（→ Displayの仕事。状態を返すだけ）
 - エラーでの処理中断（→ 常に状態を返して継続する）
 
-### 26.2 5段階パイプライン（全体フロー）
+### 26.2 5段階パイプライン（全体フロー・最終形）
+
+> 以下はVer2.20時点の最終形である。Ver2.11では `[0] Cache復元` と `[4] Cache保存` を実装せず、常に `[1] Detect` から開始する。
 
 ```text
 Terminal起動 / OnInit()
@@ -1040,12 +1109,16 @@ UNKNOWN ──Detect成功──▶ PENDING ──Validation成功──▶ OK
 //--- 論理アセットID（内部では常にこのIDで参照する）
 enum ENUM_ASSET_ID
 {
-   ASSET_GOLD, ASSET_SILVER,
-   ASSET_US30, ASSET_NAS100, ASSET_SPX500,
-   ASSET_JP225, ASSET_GER40, ASSET_UK100,
-   ASSET_BTC,  ASSET_ETH,
-   ASSET_US10Y, ASSET_US30Y,
-   ASSET_DXY,  ASSET_VIX,
+   //--- [2.11] 実装対象。まずはこの8つだけ
+   ASSET_GOLD=0, ASSET_SILVER,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
+   ASSET_BTC, ASSET_ETH,
+
+   //--- [2.20] 追加予定。今はコメントのまま残す（消さない）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
    ASSET_COUNT               // 常に末尾。配列サイズとして使う
 };
 
@@ -1412,16 +1485,41 @@ Step 4  FindFirstExisting() を実装し、Goldだけ検出させて確認
 Step 5  サフィックス自動推定を追加
 Step 6  全カテゴリのDetectを実装
 Step 7  Validation 4ゲートを追加
-Step 8  状態遷移と RetryPending() を追加
-Step 9  Cache（L1→L2の順）を追加
-Step 10 BuildSummaryText() でログを整えて完成
+Step 8  状態確定（OK / PENDING / UNAVAILABLE）と Refresh() を追加
+Step 9  BuildSummaryText() でログを整える
+────────── ここまでで Ver2.11 の AssetDetection は完成 ──────────
+Step 10 [2.20] RetryPending() を追加
+Step 11 [2.20] Cache（L1→L2の順）を追加
+Step 12 [2.20] Stale判定を追加
 ```
 
-各Stepの終わりで必ずコンパイルを通し、エキスパートの出力を目で確認してから次に進む。一気に全部書かない。
+各Stepの終わりで必ずコンパイルを通し、27.0の最小スモークテストを実行してから次に進む。一気に全部書かない。**Step 9 まで到達したら、いったん手を止めてCurrency Strength Engineに移る。** AssetDetectionを100%完成させるより、エンジンまで繋げて画面に値が出る状態を早く作る方が、設計の誤りを早く発見できる。
 
 ---
 
 ## 27. Test Plan（テスト計画）
+
+> **本章は暫定である。** テスト項目は、コードを書く前に机上で作ると必ず的外れになる。本章の詳細はVer2.11の実装完了後に、実際に発生した不具合をもとに確定させる（そのとき本書を `v1.2` に更新する）。
+>
+> **Ver2.11の実装中に守るのは 27.0 の最小スモークテストだけでよい。**
+
+### 27.0 最小スモークテスト（[2.11] これだけは毎回やる）
+
+モジュールを1つ実装するたびに、以下5項目を確認する。所要時間は5分程度である。
+
+| # | 確認 | 合格条件 |
+|---|---|---|
+| S1 | コンパイル | 警告0・エラー0 |
+| S2 | チャートに適用 | エキスパートログにエラーが出ない |
+| S3 | 検出結果のログ出力 | 検出した銘柄名と状態が全件出力される |
+| S4 | 存在しない銘柄を含む口座で起動 | クラッシュせず `Unavailable` として継続する |
+| S5 | インジケーター削除 | チャートに `GMD_` オブジェクトが残らない |
+
+**S4とS5だけは絶対に省略しない。** この2つが、後から最も直しにくい不具合の発生源である。
+
+---
+
+以下 27.1〜27.5 は、Ver2.11完成後に整備する本格的なテスト計画の設計案である。
 
 ### 27.1 テストの3層構造
 
@@ -1845,6 +1943,9 @@ g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
 | L6 | 複数チャート同時起動時、キャッシュ書き込みは1チャートのみ | ファイル競合の回避 | 2枚目以降は読み取り専用 | 検討中（28.2 D） |
 | L7 | バックテスト（ストラテジーテスター）では正しく動作しない | 他銘柄のデータ取得がテスターでは制限される | リアルタイム稼働専用として扱う | 非対応の方針 |
 | L8 | 表示は英語のみ | 実装の単純化 | — | Ver2.30で日本語表示を検討 |
+| L9 | Ver2.11では起動のたびに全銘柄を再検出する | キャッシュ未実装（26.0） | 起動が0.3〜0.5秒遅いだけ | Ver2.20 |
+| L10 | Ver2.11ではPENDINGの自動再試行を行わない | Retry未実装（26.0） | 手動Refreshで再検出 | Ver2.20 |
+| L11 | Ver2.11の検出対象は8資産 + FX28ペアのみ | 消費するエンジンがVer2.20のため | — | Ver2.20 |
 
 ---
 
@@ -1899,9 +2000,35 @@ Ver <メジャー>.<マイナー><パッチ>
 | マイナー | 機能追加（新エンジン・新パネル） |
 | パッチ | バグ修正・調整のみ |
 
-仕様書のバージョンは、ソフト本体とは独立して `v1.0` `v1.1` … と進める。Ver2.11リリース時に本書を `v1.0`（Draft を外す）とする。
+仕様書のバージョンは、ソフト本体とは独立して `v1.0` `v1.1` … と進める（35.4）。本体のリリースと仕様書のバージョンを一致させようとしないこと。文書は実装より先に進むことも後から追いつくこともあり、無理に同期させると更新されなくなる。
 
-### 35.4 CHANGELOG の書式
+### 35.4 仕様書の育て方
+
+本書を「完成させる」ことを目標にしない。**実装しながら更新し続ける文書**として扱う。
+
+```text
+v1.0 Draft  設計を一通り書き切った状態
+    ↓  実装者レビューを反映（スコープ調整）
+v1.1        ← 現在地
+    ↓  Ver2.11 実装で判明した現実を反映
+v1.2        テスト計画の確定・エラーコードの実績反映
+    ↓  Ver2.11 リリース
+v1.3        Known Limitations の更新
+    ↓  Ver2.20（Money Flow / Market Regime / Cache）
+v2.0        アーキテクチャ変更を伴う改訂
+```
+
+更新のルールは3つだけとする。
+
+| ルール | 内容 |
+|---|---|
+| 実装が仕様と違ったら、**仕様書を直す** | コード側を無理に仕様へ合わせない。実装のほうが正しいことが多い |
+| 章は消さず、**フェーズ表記を変える** | 「やらないことにした」も記録として価値がある |
+| 更新したら17章のバージョン履歴に**1行足す** | 何をいつ変えたかが追えなくなるのを防ぐ |
+
+「コードを書いたら仕様が変わった」は失敗ではなく、設計が現実と接続された証拠である。
+
+### 35.5 CHANGELOG の書式
 
 ```markdown
 ## [2.11.0] - 2026-XX-XX
@@ -1936,12 +2063,16 @@ Ver <メジャー>.<マイナー><パッチ>
 //==================================================================
 enum ENUM_ASSET_ID
 {
+   //--- [2.11] 実装対象
    ASSET_GOLD=0, ASSET_SILVER,
-   ASSET_US30, ASSET_NAS100, ASSET_SPX500,
-   ASSET_JP225, ASSET_GER40, ASSET_UK100,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
    ASSET_BTC, ASSET_ETH,
-   ASSET_US10Y, ASSET_US30Y,
-   ASSET_DXY, ASSET_VIX,
+
+   //--- [2.20] 追加枠（コメントを外すだけで有効化できる）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
    ASSET_COUNT
 };
 
@@ -2002,12 +2133,12 @@ public:
 
    bool              Init(void);
    bool              DetectAll(void);
-   void              RetryPending(void);
+   void              RetryPending(void); // [2.20]
    void              Refresh(void);
    void              Deinit(void);
 
-   bool              LoadCache(void);
-   bool              SaveCache(void);
+   bool              LoadCache(void);   // [2.20]
+   bool              SaveCache(void);   // [2.20]
 
    string            GetSymbol(ENUM_ASSET_ID id);
    bool              IsAvailable(ENUM_ASSET_ID id);
@@ -2121,12 +2252,16 @@ CAssetDetection g_assets;
 //========================= アセット関連 ============================
 enum ENUM_ASSET_ID
 {
+   //--- [2.11] 実装対象
    ASSET_GOLD=0, ASSET_SILVER,
-   ASSET_US30, ASSET_NAS100, ASSET_SPX500,
-   ASSET_JP225, ASSET_GER40, ASSET_UK100,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
    ASSET_BTC, ASSET_ETH,
-   ASSET_US10Y, ASSET_US30Y,
-   ASSET_DXY, ASSET_VIX,
+
+   //--- [2.20] 追加枠（コメントを外すだけで有効化できる）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
    ASSET_COUNT
 };
 
@@ -2216,9 +2351,9 @@ interface IEngine
 
 ---
 
-以上、Project Specification v1.0 Draft として改訂した。
+以上、Project Specification v1.1 として改訂した。
 
-Ver2.11 がリリースされた時点で、本書は `v1.0`（Draft を外す）に確定させる。
+本書は完成版ではなく、実装しながら育てる文書である（35.4）。Ver2.11の実装で判明したことを反映して `v1.2` に更新する。
 
-次のステップは、**26.15のStep 1（enum / struct 定義のコンパイル通し）から `Core/AssetDetection.mqh` の実装に着手する**こと。付録Bの `Core/Types.mqh` を先に作れば、Step 1 はそのファイルを作るだけで完了する。
+次のステップは、**付録Bの `Core/Types.mqh` を作ってコンパイルを通す**こと。これが26.15のStep 1にあたる。そこからStep 9までを一直線に進め、AssetDetectionのCache・Retryには手を付けずにCurrency Strength Engineへ移る。
 
