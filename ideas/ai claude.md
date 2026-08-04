@@ -1,392 +1,559 @@
-# Global Market Dashboard Ultimate Edition — プロジェクト仕様書
+[GlobalMarketDashboard_仕様書_v1.0_Draft.md](https://github.com/user-attachments/files/30700075/GlobalMarketDashboard_._v1.0_Draft.md)
+# 🌐 Global Market Dashboard Ultimate Edition
+> Integrated Market Analysis Platform for MetaTrader 5
 
-| 項目 | 内容 |
+---
+
+## 📌 Project Metadata
+
+| Item | Details |
 |---|---|
-| Project | Global Market Dashboard Ultimate |
+| Project Name | Global Market Dashboard Ultimate |
 | Platform | MetaTrader 5 (MT5) |
 | Language | MQL5 |
-| Repository | GlobalMarketDashboard |
-| Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v0.2** |
+| Repository | `GlobalMarketDashboard` |
+| Current Version | `2.11 Ultimate` (Development) |
+| **Document Version** | **Project Specification v1.0 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development |
 
----
-
-## 1. プロジェクト概要
-
-Global Market Dashboard Ultimate（以下GMD）は、単一銘柄・単一市場を分析する通常のインジケーターではなく、**FX・株価指数・貴金属・暗号資産・債券という複数の市場を横断し、市場間の資金の流れと相互関係を1画面で可視化する統合マーケット分析ダッシュボード**である。
-
-コンセプトは以下の1文に集約される。
-
-> 「相場を見る」のではなく、「世界のお金の流れを見る」
-
-GMDは、価格そのものではなく「今、資金がどこからどこへ動いているか」を数値化し、トレーダーが数秒で市場全体の地合いを把握できる状態を目指す。
-
----
-
-## 2. 開発目的
-
-1. 複数市場（FX・株価指数・貴金属・暗号資産・債券）の状態を1画面で同時に把握できるようにする
-2. 通貨強弱・資金フロー・リスクオン/オフといった「市場の空気感」を定量化し、裁量判断の根拠を数値で補強する
-3. 手動で複数のチャート・複数のインジケーターを見比べる手間を削減する
-4. 将来的な統計・相関分析・機械学習への拡張を見据えた、保守しやすいモジュール構成にする
-
----
-
-## 3. 設計思想（Design Philosophy）
-
-- **1画面完結**：チャートを切り替えなくても市場全体の状態が分かること
-- **数値化優先**：「なんとなく強い/弱い」ではなく、スコア・パーセンテージという形で根拠を残すこと
-- **軽量であること**：多数の銘柄・多数の指標を同時に扱うため、CPU負荷とオブジェクト数を常に意識すること（詳細は16章）
-- **壊れにくいこと**：ブローカーごとの銘柄表記の違い、週末のデータ欠損、通貨ペアの非存在など、実運用で必ず起きる例外を前提に設計すること（詳細は9章・28章）
-
----
-
-## 4. システム概要
-
-GMDは以下の5つの分析エンジンと、それらを束ねるダッシュボード表示層で構成される。
-
-| エンジン | 役割 |
+### 改訂履歴
+| Version | 内容 |
 |---|---|
-| Currency Strength Engine | 主要7通貨・28通貨ペアの強弱をスコア化 |
-| Money Flow Engine | 株式・貴金属・暗号資産・債券などアセット間の資金流出入を判定 |
-| Market Regime Engine | 複数指標を合成し、Risk ON / Risk OFF / Neutralを判定 |
-| Confidence Engine | 各エンジンの一致度から、シグナル全体の信頼度を算出 |
-| Best Pair Engine | 通貨強弱から、最も分かりやすいトレンドが出やすい通貨ペアを提案 |
+| v0.1 | 初版。理念・各エンジン概要・モジュール構成・ロードマップ |
+| v0.2 | 重複章の統合、各エンジンの計算式明文化、実装上の落とし穴と対策、テスト計画・未確定事項を追加 |
+| v0.3 | Asset Detection Flow（5段階パイプライン）、Risk Score区分表、Confidence寄与率、Money Flow Liquidity Score定義を追加 |
+| **v1.0 Draft（本書）** | 各エンジンを **Purpose / Inputs / Calculation / Output / Display / Future Expansion** の統一構成に再編。クラス設計（メソッドシグネチャ）を明記。Class Diagram・Data Flow・Error Handling・Performance Benchmark・Test Plan・Release Checklist・Known Limitationsを新設 |
 
-これらの結果を `Display/Dashboard.mqh` が受け取り、選択された表示モード（12章）に応じて画面に描画する。
-
----
-
-## 5. 通貨強弱エンジン（Currency Strength Engine）
-
-### 5.1 対象通貨
-USD / EUR / JPY / GBP / CHF / AUD / CAD の主要7通貨。
-
-### 5.2 対象通貨ペア
-上記7通貨の組み合わせで作れる **28通貨ペア**（7C2 = 21ペア + クロス円等を含む一般的な組み合わせ）。実際に使用するペアは、9章のシンボル自動検出ロジックで、ブローカーに実在するものだけに絞り込む。
-
-### 5.3 判定ロジック（明文化）
-- 判定時間足：`Inp_StrengthTimeframe`（既定 M1、設定変更可）
-- 各通貨ペアについて、**直近の確定済み1本**（形成中の最新足は使わない）の始値・終値を比較する
-  - 終値 > 始値（陽線）→ 分子（ベース通貨）に **+1点**
-  - 終値 < 始値（陰線）→ 分母（クオート通貨）に **+1点**
-  - 同値の場合は加点なし
-- 全28ペアの判定結果を通貨ごとに合算し、スコアとする
-
-> **設計メモ**：得点を「勝った側だけに加点」する非対称ロジックにするか、「上昇側+1・下落側-1」の対称ロジックにするかは要件確定が必要。本仕様では前者（非対称・加点のみ）を既定仕様とする。対称ロジックにする場合は`Inp_SymmetricScoring`のようなON/OFFスイッチを設けて両対応にする。
-
-### 5.4 ランキング表示
-- 7通貨をスコア降順に並べ、1位〜7位を表示
-- 表示形式は横並び1行（縦積みは画面を圧迫するため非推奨。実装経験上、横並びの方が視認性が高い）
-
-### 5.5 色分け
-- 既定は「最強＝赤、最弱＝青」のグラデーション
-- ただし文字が小さいパネル上では**色分けよりも白文字＋数字ランク表示の方が視認性が高い**ケースがあるため、`Inp_UseStrengthColor`で色分け自体のON/OFFを用意すること
-
-### 5.6 信頼度（Confidence）との関係
-現時点では「検討中」とされているが、最低限、**判定に使った通貨ペア数（28ペア中、実際にブローカーで取得できたペア数）** を信頼度計算の入力に含めることを推奨する。取得できたペアが少ない状態（例：週末や一部銘柄が休止中）でランキングを表示すると誤解を招くため、`取得成功ペア数 < 20` の場合はランキングにグレーアウト表示や注意書きを出す設計にする。
+> Ver2.11の実装が完了し、実機での動作確認が取れた時点で、本書は**Project Specification v1.0**（Draft外し）に昇格する。
 
 ---
 
-## 6. マネーフロー・エンジン（Money Flow Engine）
+## 1. Project Overview & Philosophy
 
-### 6.1 目的
-FX以外の主要市場（株価指数・貴金属・暗号資産・債券）を対象に、資金が「入ってきているか」「出て行っているか」を可視化する。
+### 1.1 ビジョン
+単なるMT5用インジケーターではなく、FX・株式・Gold・暗号資産・債券をクロスアセットで統合分析し、**市場全体の資金循環（マネーフロー）を1画面で可視化する統合マーケット分析プラットフォーム**を目指す。
 
-### 6.2 対象市場・代表銘柄
+> 「相場を見る」のではなく「世界のお金の流れを見る」
+> 市場の状態そのものを数値化するMarket Analytics Engineである。
 
-| 市場 | 代表銘柄 |
-|---|---|
-| 株価指数 | US30, NAS100, SPX500, JP225, GER40, UK100 |
-| 貴金属 | Gold(XAUUSD), Silver(XAGUSD) |
-| 暗号資産 | BTC, ETH |
-| 債券 | US10Y, US30Y |
+### 1.2 開発目的
+1. 複数市場の状態を1画面で同時に把握できるようにする
+2. 通貨強弱・資金フロー・リスクオン/オフを定量化し、裁量判断の根拠を数値で補強する
+3. 手動でのチャート切替・指標見比べの手間を削減する
+4. 将来の統計・相関分析・機械学習拡張に耐えるモジュール構成にする
 
-### 6.3 判定ロジック（要具体化）
-現行仕様は「一定時間の上昇/下降を判定」としか書かれていないため、以下を最低限明記する。
-
-- 判定時間足・判定期間（例：直近N本の終値変化率）
-- 「↑資金流入」「↓資金流出」「→中立」を分ける**しきい値**（例：直近N本の変化率が+0.3%以上で↑、-0.3%以下で↓、それ以外は→）
-- 複数の資産をまたいで比較する場合は、**変化率（%）で正規化**すること（価格そのものの上昇幅では、株価指数とGoldでは桁が違うため比較できない）
-
-### 6.4 表示
-- ↑（緑）／→（灰）／↓（赤）の記号で、各アセットの状態を一覧表示
+### 1.3 設計思想
+- **1画面完結**：チャート切替なしで市場全体を把握できること
+- **数値化優先**：「なんとなく」ではなくスコア・％で根拠を残すこと
+- **軽量であること**：多数銘柄・多数指標を同時に扱うため、CPU負荷とオブジェクト数を常に意識する（7章・16章参照）
+- **壊れにくいこと**：ブローカーごとの表記差、週末のデータ欠損、銘柄非対応を前提に設計する（4章・31章参照）
 
 ---
 
-## 7. 市場レジーム・エンジン（Market Regime Engine）
+## 2. System Architecture & Flow
 
-### 7.1 入力
-SP500, NASDAQ, US10Y, Gold, USDJPY, BTC, ETH, VIX, DXY
+### 2.1 全体処理パイプライン
 
-### 7.2 出力
-Risk ON / Risk OFF / Neutral の3値、および 0-100 のスコア
-
-### 7.3 判定ロジック（要具体化）
-現行仕様には計算式がないため、以下のような**加重スコア方式**を推奨する。
-
-```
-Score = Σ( 指標iの標準化された変化率 × 重みi )
+```text
+               [ Data Layer ]
+         Asset Detection (自動判定・キャッシュ)
+                    │
+                    ▼
+            [ Analysis Layer ]
+ ┌──────────────────────────────────────┐
+ │ 1. Currency Strength Engine           │
+ │ 2. Market Regime Engine (Risk Score)  │
+ │ 3. Money Flow Engine                  │
+ │ 4. Confidence Engine                  │
+ │ 5. Best Pair Engine                   │
+ └──────────────────┬─────────────────────┘
+                    │
+                    ▼
+          [ Presentation Layer ]
+ ┌──────────────────────────────────────┐
+ │ Dashboard UI / Multi-Panel Display    │
+ └──────────────────────────────────────┘
 ```
 
+### 2.2 レイヤーの責務分離（重要原則）
+- **Data Layer**（Core/AssetDetection.mqh）：銘柄の存在確認・正規化・キャッシュのみを担当し、分析ロジックを持たない
+- **Analysis Layer**（Engines/）：各`Calculate()`は**計算結果だけ**を返し、描画処理を持たない
+- **Presentation Layer**（Display/）：Engineを**呼び出すだけ**で、独自の計算ロジックを持たない
+
+この分離により、将来Engineを差し替えたり、UIだけ作り直したりする際の影響範囲を最小化する。
+
+---
+
+## 3. Core Engine Detailed Specifications
+
+各エンジンは以下の統一フォーマットで記述する：**Purpose / Inputs / Calculation / Output / Display / Future Expansion**
+
+---
+
+### 3.1 🔀 Currency Strength Engine（`CCurrencyStrength`）
+
+#### Purpose
+主要7通貨の相対的な強弱関係を、実際の値動きから定量化する。
+
+#### Inputs
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `InpStrengthTimeframe` | ENUM_TIMEFRAMES | 判定に使う時間足（既定 M1） |
+| `InpSymmetricScoring` | bool | 対称加点方式（上昇+1/下降-1）を使うか。falseなら非対称（勝った側のみ+1） |
+| 対象通貨 | string[7] | USD, EUR, JPY, GBP, CHF, AUD, CAD（固定） |
+| 対象ペア | string[28] | 上記7通貨の組み合わせで作れる全28ペア（Asset Detectionで実在確認済みのもののみ使用） |
+
+#### Calculation
+1. 各ペアについて、`InpStrengthTimeframe`の**直近確定足**（形成中の最新足は除く）の始値・終値を取得
+2. 終値 > 始値 → 分子（ベース通貨）に+1点、`InpSymmetricScoring=true`なら分母に-1点
+3. 終値 < 始値 → 分母（クオート通貨）に+1点、`InpSymmetricScoring=true`なら分子に-1点
+4. 7通貨のスコアを合算し、降順にソートして順位を確定
+
+#### Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `Score[7]` | double | 通貨ごとの合計スコア |
+| `Rank[7]` | int | 1位〜7位の順位 |
+| `ValidPairCount` | int | 実際に計算に使えたペア数（28ペア中）。Confidence Engineへの入力にもなる |
+
+#### Display
+- 横並び1行で1位〜7位を表示（縦積みは画面を圧迫するため非推奨）
+- 色分けは既定OFFも可（`InpUseStrengthColor`）。ONの場合は最強=赤系、最弱=青系のグラデーション
+- `ValidPairCount < 20`の場合は「データ不足」の注意書きを表示
+
+#### Future Expansion（Ver2.20〜）
+- 通貨ペアごとの重み付け（流動性の高いペアを重視 等）
+- ATR・ボラティリティを加味したスコアリング
+
+#### クラス設計
+```mql5
+class CCurrencyStrength
+{
+public:
+   bool   Initialize(ENUM_TIMEFRAMES tf, bool symmetric);
+   void   Calculate();               // 毎更新サイクルで呼ぶ
+   int    GetRank(string currency);  // 1〜7を返す
+   double GetScore(string currency);
+   int    GetValidPairCount();
+   void   Draw(int x, int y);        // Display層から呼ばれる場合のみ使用
+};
+```
+
+---
+
+### 3.2 🌊 Money Flow & Liquidity Engine（`CMoneyFlow`）
+
+#### Purpose
+FX以外の主要アセット（株価指数・貴金属・暗号資産・債券）間の資金流出入と、機関投資家の「現金化圧力」を判定する。
+
+#### Inputs
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `InpFlowLookbackBars` | int | 変化率算出に使う本数 |
+| `InpFlowThresholdPct` | double | ↑/↓と判定する変化率のしきい値（％、例：0.3） |
+| 対象アセット | string[] | 株価指数、Gold、Silver、暗号資産、債券（Asset Detectionで解決済みの銘柄） |
+
+#### Calculation
+1. 各アセットについて、直近`InpFlowLookbackBars`本の**変化率（％）**を算出（価格差そのものではなく％で正規化。株価指数とGoldは桁が違うため必須）
+2. 変化率 ≥ `+InpFlowThresholdPct` → ↑（資金流入）
+3. 変化率 ≤ `-InpFlowThresholdPct` → ↓（資金流出）
+4. それ以外 → →（中立）
+5. 変化率の大きさに応じて↑↑（強い流入）／↓↓（強い流出）の2段階表示にも対応
+
+#### Liquidity Score（現金化圧力の判定）
+| パターン | 判定 |
+|---|---|
+| `Gold↑` + `Bond↑` + `JPY↑` + `VIX↑` | **Cash Preference**（現金化圧力の急増） |
+| `Stocks/NASDAQ↑` + `Crypto/BTC↑` + `Gold↓` + `JPY↓` | **Risk-Seeking**（リスク資産への資金流入） |
+
+> 上記2パターンは代表例であり、実装時には各条件の一致数に応じたスコア化（例：4条件中何個一致したか）にすることを推奨する。
+
+#### Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `FlowDirection[]` | int (-2〜+2) | アセットごとの流入/流出方向 |
+| `LiquidityState` | enum | `CASH_PREFERENCE` / `RISK_SEEKING` / `NEUTRAL` |
+
+#### Display
+- ↑↑/↑（緑）、→（灰）、↓/↓↓（赤）の記号で一覧表示
+
+#### Future Expansion（Ver2.20〜）
+- アセット間の相関係数を加味した資金ローテーション分析
+
+#### クラス設計
+```mql5
+class CMoneyFlow
+{
+public:
+   bool  Initialize(int lookbackBars, double thresholdPct);
+   void  Calculate();
+   int   GetFlowDirection(string assetName); // -2..+2
+   int   GetLiquidityState();                // enum
+};
+```
+
+---
+
+### 3.3 🛡️ Market Regime Engine（`CMarketRegime`）
+
+#### Purpose
+マクロ市場9指標から総合的なリスクセンチメントを測定し、Risk Score(0〜100)を算出する。
+
+#### Inputs
+| 項目 | 型 | 説明 |
+|---|---|---|
+| 指標 | string[9] | SP500, NASDAQ, US10Y, Gold, USDJPY, BTC, ETH, VIX, DXY |
+| `InpRegimeWeights[9]` | double[] | 各指標の重み（初期値は経験則、将来Ver4.00で最適化） |
+
+#### Calculation
+```
+Score = Σ( 指標iの標準化変化率 × 重みi )
+```
 - 各指標を直近N本の変化率に変換し、Z-score等で標準化（単位を揃える）
-- 株式・BTC・ETHの上昇、VIX・US10Yの低下 → Risk ONに寄与（正の重み）
-- VIX・US10Yの上昇、金の急騰（安全資産への逃避） → Risk OFFに寄与（負の重み）
-- 合成スコアが一定の閾値（例：+20以上でRisk ON、-20以下でRisk OFF、その間はNeutral）で3値に変換
+- 株式・BTC・ETHの上昇、VIX・US10Yの低下 → 正の重み（Risk ON方向）
+- VIX・US10Yの上昇、Goldの急騰（安全資産への逃避） → 負の重み（Risk OFF方向）
+- 合成スコアを0〜100にスケーリング
 
-重みの初期値は経験則で仮設定し、将来的にVer4.00の分析エンジンで最適化する前提とする。
+#### Risk Score 区分テーブル
+| Score | Status | 判定テキスト | 市場状況 |
+|---|---|---|---|
+| 80–100 | 🔥 Strong Risk ON | 強いリスクオン | 株・クリプト急騰、安全資産（円・金）売却 |
+| 60–79 | 🟢 Risk ON | リスクオン | リスク資産選好、トレンド継続 |
+| 40–59 | ⚪ Neutral | 中立・レンジ | 銘柄間で強弱拮抗、方向感なし |
+| 20–39 | 🔴 Risk OFF | リスクオフ | リスク資産売却、安全資産へ避難 |
+| 0–19 | ❄️ Strong Risk OFF | 強いリスクオフ | 全面リスク回避・パニック・現金化の進行 |
+
+#### Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `RiskScore` | double (0-100) | 総合スコア |
+| `RiskStatus` | enum | 上記5区分 |
+
+#### Display
+- スコアとステータステキストをダッシュボード上部に表示
+
+#### Future Expansion（Ver3.00〜）
+- 重みの動的最適化（相関分析・機械学習）
+
+#### クラス設計
+```mql5
+class CMarketRegime
+{
+public:
+   bool   Initialize(double &weights[]);
+   void   Calculate();
+   double GetRiskScore();
+   int    GetRiskStatus(); // enum
+};
+```
 
 ---
 
-## 8. 信頼度エンジン（Confidence Engine）
+### 3.4 🎯 Confidence Engine（`CConfidence`）
 
-現行仕様は「現在検討中」のままだが、最低限のたたき台として以下を提案する。
+#### Purpose
+各エンジンの判定結果を寄与率で合算し、現在の相場環境に対する総合確信度（0〜100%）を算出する。
 
-### 8.1 判定材料
-- Currency Strength（最強・最弱の点差が大きいほど信頼度が上がる）
-- Money Flow（複数資産の方向が一致しているほど信頼度が上がる）
-- Market Regime Score（極端な値ほど、その方向への確信度が高い）
-- Momentum（直近の値動きの継続性）
+#### Inputs
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `InpWeightStrength` | double | Currency Strength一致率の寄与率（既定40%） |
+| `InpWeightFlow` | double | Money Flowの寄与率（既定30%） |
+| `InpWeightRegime` | double | Market Regimeの寄与率（既定20%） |
+| `InpWeightMomentum` | double | Momentumの寄与率（既定10%） |
 
-### 8.2 計算方針
+#### Calculation
 ```
-Confidence(%) = Σ( 各エンジンの正規化スコア × 重み ) を 0〜100 にスケーリング
+Confidence(%) = ( StrengthScore×0.40 + FlowScore×0.30 + RegimeScore×0.20 + MomentumScore×0.10 )
 ```
-- 各エンジンの出力を同じスケール（0〜100）に正規化してから加重平均する
-- どれか1つのエンジンのデータが取得できない場合（例：債券データが取得不可）は、その分の重みを他のエンジンに再配分するフォールバックを用意する
+- 各エンジンの出力を0〜100に正規化してから加重平均する
+- いずれかのエンジンのデータが取得できない場合（例：債券データ取得不可）、そのエンジンの重みを**他のエンジンへ按分して再配分**するフォールバックを実装する（重み合計は常に100%を維持）
+
+#### Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `ConfidencePct` | double (0-100) | 総合確信度 |
+| `WeightBreakdown[]` | double[] | 実際に使われた寄与率の内訳（フォールバック再配分後） |
+
+#### Display
+- 例：`Confidence 91%`
+
+#### Future Expansion（Ver4.00〜）
+- 過去のシグナルとその後の値動きを検証し、寄与率を自動調整（学習）
+
+#### クラス設計
+```mql5
+class CConfidence
+{
+public:
+   bool   Initialize(double wStrength, double wFlow, double wRegime, double wMomentum);
+   void   Calculate(CCurrencyStrength &cs, CMoneyFlow &mf, CMarketRegime &mr, double momentumScore);
+   double GetConfidence();
+};
+```
 
 ---
 
-## 9. ベストペア・エンジン（Best Pair Engine）
+### 3.5 🏆 Best Pair Engine（`CBestPair`）
 
-### 9.1 入力
-Currency Strength Engineの結果（最強通貨・最弱通貨）
+#### Purpose
+最強通貨・最弱通貨を組み合わせ、最もトレンドが出やすい通貨ペアを自動抽出する。
 
-### 9.2 出力
-おすすめ通貨ペア（例：EUR最強・JPY最弱 → EURJPY）
+#### Inputs
+| 項目 | 型 | 説明 |
+|---|---|---|
+| Currency Strength Engineの出力 | - | 最強通貨・最弱通貨 |
 
-### 9.3 実装上の注意点（実体験に基づく重要事項）
-最強・最弱を単純に文字列結合しただけでは、**そのペアがブローカーに存在しない場合がある**（例：CHFUSDは無いがUSDCHFはある、など基軸通貨の並びは通貨ごとに慣習が決まっている）。
+#### Calculation（実装上の必須手順）
+1. `最強通貨+最弱通貨`（例：USDJPY）が実在するか`SymbolInfoInteger(symbol, SYMBOL_EXIST)`で確認
+2. 存在しなければ逆順（`最弱通貨+最強通貨`）を試す
+3. どちらも存在しなければ「該当ペアなし」とする
+4. 逆順を採用した場合、**方向の解釈も反転する**ことを記録する（強い通貨が分母に来るため）
 
-以下の解決フローを必ず実装すること。
+#### Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `BestPairSymbol` | string | 実在する銘柄名（例：EURJPY） |
+| `IsReversed` | bool | 逆順採用フラグ |
+| `Direction` | int | 想定方向（+1=上昇想定、-1=下降想定） |
 
-1. `最強通貨+最弱通貨`（例：USDJPY）が実在するか `SymbolInfoInteger(symbol, SYMBOL_EXIST)` で確認
-2. 存在しなければ、逆順（`最弱通貨+最強通貨`）を試す
-3. どちらも存在しない場合（間に他の通貨を挟む必要がある場合）は、「該当ペアなし」を明示する
-4. 逆順を採用した場合、**方向の解釈も反転する**（強い通貨が分母に来るため、そのペア自体は下落方向が「強い通貨側の勝ち」を意味する）ことを表示に反映する
-5. 表示された銘柄はクリックでチャート遷移できるようにする（利便性が大きく向上する）
+#### Display
+- 例：`Best Pair EURJPY`。**クリックでそのチャートに遷移**できるようにする（利便性が大きく向上する）
+
+#### Future Expansion（Ver2.20〜）
+- 2位・3位の候補ペアも合わせて表示
+
+#### クラス設計
+```mql5
+class CBestPair
+{
+public:
+   void   Calculate(CCurrencyStrength &cs, CAssetDetection &ad);
+   string GetSymbol();
+   bool   IsReversed();
+   int    GetDirection();
+};
+```
 
 ---
 
-## 10. アセット検出（Asset Detection）
+## 4. Asset Detection Specifications（`CAssetDetection`）
 
-### 10.1 処理フロー
-```
-Asset Detection → データ取得 → Market Regime Engine → Money Flow Engine → Dashboard表示
-```
+### 4.1 Purpose
+ブローカーごとの銘柄表記揺れ（シンボル名）を自動判定・正規化し、全エンジン共通のフォーマットでデータを提供する。
 
-### 10.2 ブローカー間の表記ゆれ対応（優先順位リスト）
-ブローカーによって同じ資産でも銘柄名が異なるため、**優先順位付きの候補リストから最初に見つかったものを採用**する方式にする。
-
-例：Gold
-```
-XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
-```
-
-この「候補から実在するものを探す」ロジックは、Best Pair Engine（9章）とも共通化し、`Core/AssetDetection.mqh`内に汎用関数として1箇所にまとめること（重複実装を避ける）。
-
-### 10.3 カテゴリ別 対象銘柄例
-| カテゴリ | 代表銘柄例 |
+### 4.2 Symbol Priority（優先順位リスト）
+| カテゴリ | 優先順位 |
 |---|---|
-| FX | USDJPY, EURUSD, GBPUSD 他28ペア |
-| 貴金属 | Gold, Silver |
-| 株価指数 | SP500, NAS100, US30, JP225, GER40, UK100 |
-| 暗号資産 | BTC, ETH |
-| 債券 | US10Y, US30Y |
+| Gold | `XAUUSD` → `GOLD` → `GOLDmicro` → `GOLD.r` → `XAUUSD.a` |
+| Equity Index | `SPX500` / `US500` / `US30` / `NAS100` / `JP225` / `GER40` / `UK100` |
+| Crypto | `BTCUSD` / `BTCUSDT` / `ETHUSD` |
+| Bond | `US10Y` / `US30Y` |
+
+この優先順位リストは、Best Pair Engine（3.5章）とも共通化し、`Core/AssetDetection.mqh`内の汎用関数に1箇所だけ実装する（重複実装を避ける）。
+
+### 4.3 Asset Detection Flow（5段階パイプライン）
+
+```text
+[ Terminal 起動 / OnInit ]
+           │
+           ▼
+   1. Symbol Scan (ブローカー提供銘柄の一括検索)
+           │
+           ▼
+   2. Detection (カテゴリ別エイリアス照合)
+      (Gold / Index / Crypto / Bond)
+           │
+           ▼
+   3. Validation (データ取得可能性の検証)
+           │
+           ▼
+   4. Availability (非対応銘柄のステータス割り当て)
+           │
+           ▼
+   5. Cache (検索結果のメモリ保持)
+           │
+           ▼
+ [ Analysis Engine へ参照引き渡し ]
+```
+
+#### 段階別詳細
+1. **Symbol Scan**：`SymbolsTotal()`等でブローカーが提供する全銘柄を一括取得
+2. **Detection**：優先順位リスト（4.2章）と照合し、カテゴリごとに候補銘柄を特定
+3. **Validation**：検出した銘柄が`SymbolInfoDouble()`等で実際に価格を取得できるか検証する。ヒストリーデータが0本の銘柄（実質的に取引されていない銘柄）もここで弾く
+4. **Availability**：取引不可・データ取得不可の銘柄は、システムを停止させず **`Unavailable`フラグ**を立てて処理をスキップする。UI上は「N/A」等で安全に表示する
+5. **Cache**：検出結果を構造体配列としてメモリに保持する。毎ティックの再検索処理を排除し、パフォーマンスを向上させる（キャッシュは`OnInit`時、または銘柄リスト変更時にのみ再構築する）
+
+### 4.4 Output
+| 項目 | 型 | 説明 |
+|---|---|---|
+| `ResolvedSymbol[category]` | string | カテゴリごとの実銘柄名 |
+| `Availability[category]` | enum | `AVAILABLE` / `UNAVAILABLE` |
+
+### 4.5 クラス設計
+```mql5
+class CAssetDetection
+{
+public:
+   bool   Initialize();                       // OnInitで1度だけ呼ぶ（Symbol Scan〜Cacheまで実行）
+   string Resolve(string category);            // キャッシュから解決済み銘柄名を返す
+   bool   IsAvailable(string category);
+   void   Rebuild();                           // 銘柄リスト変更時に再スキャン
+};
+```
 
 ---
 
-## 11. 画面構成・表示モード（Display Modes）
+## 5. UI & Display Specifications
 
-> 旧仕様書の5章・12章が重複していたため、本章に統合した。
-
+### 5.1 Display Modes
 | モード | 内容 |
 |---|---|
-| Mode 1: Chart | チャート＋移動平均＋BB＋Pivot（通常のチャート分析画面） |
-| Mode 2: Dashboard | Market Dashboardのみ表示（チャート要素なし） |
-| Mode 3: Hybrid | チャート＋Dashboardを同時表示 |
-| Mode 4: Minimal | 通貨強弱ランキングのみの最小表示 |
+| Mode 1: Chart | チャートメイン表示（MA・BB・Pivot等） |
+| Mode 2: Dashboard | 分析パネルのみ全画面表示 |
+| Mode 3: Hybrid（推奨） | チャート＋ダッシュボード併用 |
+| Mode 4: Minimal | 強弱ランキング等、最低限のみ表示 |
 
-モード切替は右下のボタン、または入力パラメータ`Inp_DisplayMode`から行う。
-
----
-
-## 12. マーケットオープン・カウントダウン
-
-東京・ロンドン・ニューヨークの各市場について、「開場中」または「開場まであとX時間X分」を表示する。
-
-- サーバー時間とセッション時刻のズレ（サマータイム含む）を考慮した計算ロジックを`Core/Utils.mqh`に共通化すること
-- 過去の開発経験上、サーバー時間とNYクローズ時刻の対応関係はブローカーごとに異なるため、**セッション境界時刻をオフセットとして入力パラメータ化**しておくと、環境が変わっても調整しやすい
-
----
-
-## 13. 経済指標イベント（Economic Events）
-
-- CPI・FOMCなど主要イベントまでの残り時間を表示
-- データソース（カレンダーAPI／手動登録／MT5標準のイベントカレンダー流用）を要選定
-- 更新頻度は60秒毎（20章参照）
-
----
-
-## 14. ダッシュボード レイアウト（イメージ）
-
-```
+### 5.2 Dashboard Layout（イメージ）
+```text
 ┌──────────────────────────────┐
-│ GLOBAL MARKET DASHBOARD      │
+│ GLOBAL MARKET DASHBOARD       │
 ├──────────────────────────────┤
-│ Risk ON        82%           │
-│ Confidence     91%           │
-│ Best Pair      EURJPY        │
+│ Risk ON        82%            │
+│ Confidence     91%            │
+│ Best Pair      EURJPY         │
 ├──────────────────────────────┤
-│ Currency Strength             │
-│ USD █████                     │
-│ EUR ████                      │
-│ GBP ███                       │
-│ AUD ██                        │
-│ JPY █                         │
+│ Currency Strength              │
+│ USD █████                      │
+│ EUR ████                       │
+│ GBP ███                        │
+│ AUD ██                         │
+│ JPY █                          │
 ├──────────────────────────────┤
-│ Money Flow                    │
-│ Stocks      ↑↑                │
-│ Gold        ↓                 │
-│ Bond        ↓                 │
-│ Crypto      ↑↑↑               │
+│ Money Flow                     │
+│ Stocks      ↑↑                 │
+│ Gold        ↓                  │
+│ Bond        ↓                  │
+│ Crypto      ↑↑↑                │
 ├──────────────────────────────┤
-│ Tokyo   OPEN                  │
-│ London  03:12                 │
-│ NewYork 09:54                 │
+│ Tokyo   OPEN                   │
+│ London  03:12                  │
+│ NewYork 09:54                  │
 ├──────────────────────────────┤
-│ CPI      2h14m                │
-│ FOMC     1d03h                │
+│ CPI      2h14m                 │
+│ FOMC     1d03h                 │
 └──────────────────────────────┘
 ```
+描画順（更新順）：Market Summary → Currency Strength → Best Pair → Money Flow → Market Open → Economic Events
 
-表示の描画順（更新順）：Market Summary → Currency Strength → Best Pair → Money Flow → Market Open → Economic Events
+### 5.3 マーケットオープン・カウントダウン
+東京・ロンドン・ニューヨーク各市場について「開場中」または「開場まであとX時間X分」を表示。サーバー時間とセッション境界のズレ（サマータイム含む）は`Core/Utils.mqh`に共通化し、オフセットを入力パラメータ化する（ブローカーごとに調整可能にする）。
+
+### 5.4 経済指標イベント
+CPI・FOMC等の主要イベントまでの残り時間を表示。データソース（カレンダーAPI／手動登録／MT5標準イベント流用）は未確定（35章参照）。
 
 ---
 
-## 15. 色分けルール（Color Rules）
+## 6. Color System & Rules
 
 | シグナル | 色 |
 |---|---|
-| Strong Buy | 赤 |
-| Buy | オレンジ |
-| Neutral | 白 |
-| Sell | 水色 |
-| Strong Sell | 青 |
+| 🔴 Strong Buy | 赤 `clrRed` |
+| 🟠 Buy | オレンジ `clrDarkOrange` |
+| ⚪ Neutral | 白/灰 `clrGainsboro` |
+| 🩵 Sell | 水色 `clrDeepSkyBlue` |
+| 🔵 Strong Sell | 青 `clrBlue` |
 
-> **注意**：5章の通貨強弱の色分け（最強=赤/最弱=青）と、本章のシグナル色（Strong Buy=赤/Strong Sell=青）は意味が異なるため、実装時に混同しないよう変数名・関数名を明確に分離すること（例：`GetStrengthColor()`と`GetSignalColor()`）。
-
----
-
-## 16. パフォーマンス設計
-
-| 項目 | 方針 |
-|---|---|
-| 更新間隔 | 通貨強弱：1秒毎 or 新しいバーのみ／株価指数・Gold：5秒毎／債券：10秒毎／経済指標・市場オープン：60秒毎（20章参照） |
-| CPU負荷 | 可能な限り低く抑える |
-| オブジェクト数 | 最小限に抑える |
-| 描画方式 | 差分更新（変化があった部分だけ再描画） |
-
-### 16.1 実装上の重要な注意点（実体験より）
-
-- **毎ティック全銘柄を再計算するのは避ける**。1秒間に何度もティックが来る通貨ペアでは、`GetTickCount()`等で前回更新時刻を記録し、指定間隔を超えた時だけ再計算するタイマー方式にする
-- **オブジェクトは「作り直す」のではなく「位置・テキストだけ更新」する**。`ObjectDelete`→`ObjectCreate`を毎回繰り返すとちらつき・負荷増の原因になる。`ObjectFind`で存在確認し、無ければ作成、あれば`ObjectSetString`/`ObjectSetInteger`で更新、という設計にする
-- **初回起動時のヒストリーデータ未取得への対策**：ブローカーからのデータ取得は非同期のため、インジケーター起動直後は必要な本数のバーが揃っていないことがある。「データが揃うまで待って、揃ってから一括描画する」フラグ管理（例：`g_dataReady`）を各エンジンに用意し、揃うまでは空欄／「準備中」表示にする
-- **週末・市場休止中の挙動**：新しい価格が来ないため、ティック起動の再計算処理が走らない。市場が閉まっている間もカウントダウン表示等は動き続けられるよう、`OnTimer()`を併用し、価格更新に依存しない部分は別途タイマーで更新する
+> **注意**：Currency Strengthの色分け（最強=赤/最弱=青）と、本章のシグナル色（Strong Buy=赤/Strong Sell=青）は**意味が異なる**。実装時は`GetStrengthColor()`と`GetSignalColor()`のように関数名を明確に分離すること（混同すると誤ったシグナルに見える事故につながる）。
 
 ---
 
-## 17. バージョン履歴
-
-| バージョン | 内容 |
-|---|---|
-| Project Specification v0.1 | 初版（本ドキュメントのベース） |
-| Project Specification v0.2 | 本改訂版。重複章の統合、各エンジンの計算式明文化、実装上の落とし穴と対策を追加 |
-
----
-
-## 18. モジュール構成（System Modules Architecture）
-
-将来の拡張（Ver3, Ver4〜）に耐えられるよう、役割ごとにディレクトリを分離する。
+## 7. System Architecture & Directory Structure
 
 ```text
 src/
 └── Modules/
-    ├── Engines/                  // 分析・計算ロジック
-    │   ├── CurrencyStrength.mqh  // 28通貨ペアの強弱スコア計算
-    │   ├── MoneyFlow.mqh         // アセット間の資金流出入分析
-    │   ├── MarketRegime.mqh      // Risk Score (0-100) および Risk ON/OFF判定
-    │   ├── Confidence.mqh        // 総合確信度 (0-100%) 計算
-    │   └── BestPair.mqh          // 最強vs最弱の「ベストペア」自動選定
+    ├── Core/                     // [基盤・ユーティリティ (第1段階)]
+    │   ├── AssetDetection.mqh     // ブローカー表記揺れ自動検出・キャッシュ
+    │   ├── Logger.mqh             // 初期化・検出・エラー・ロード等のログ管理
+    │   └── Utils.mqh              // 共通関数・配列操作・型変換・時刻計算
     │
-    ├── Display/                  // UI描画・表示制御
-    │   ├── Dashboard.mqh         // 画面全体のUIコントロール・レイアウト統括
-    │   ├── SummaryPanel.mqh      // Market Summary描画
-    │   ├── RankingPanel.mqh      // 通貨強弱ランキング描画
-    │   └── MoneyFlowPanel.mqh    // マネーフロー・アセット状況描画
+    ├── Engines/                  // [計算・判定ロジック (第2段階)]
+    │   ├── CurrencyStrength.mqh   // 通貨強弱スコア計算
+    │   ├── BestPair.mqh           // 最強vs最弱ペア自動選定
+    │   ├── Confidence.mqh         // 寄与率合算・確信度計算
+    │   ├── MarketRegime.mqh       // Risk Score & 地合い判定
+    │   └── MoneyFlow.mqh          // 資金流出入・マネーフロー分析
     │
-    └── Core/                     // システム共通基盤・ユーティリティ
-        ├── AssetDetection.mqh     // ブローカー固有銘柄の自動検出（優先順位リスト方式）
-        ├── Logger.mqh             // 動作ログ・エラーハンドリング・デバッグ出力
-        └── Utils.mqh              // 配列操作・型変換・時刻計算等の汎用補助関数
+    └── Display/                  // [UI描画・描画制御 (第3段階)]
+        ├── Dashboard.mqh          // GUI全体の統括制御
+        ├── SummaryPanel.mqh       // Market Summary描画
+        ├── RankingPanel.mqh       // 強弱ランキングパネル描画
+        └── MoneyFlowPanel.mqh     // マネーフロー・アセット描画
 ```
 
-### 18.1 モジュール間インターフェースの原則（27章と統合）
-- `Dashboard.mqh`は各Engineを**呼び出すだけ**で、計算ロジックを持たない
-- 各Engineは`Calculate()`または`Update()`を実行し、**計算結果だけ**を返す（描画処理を持たない）
-- Engine間の直接依存は最小限にし、必要なデータはCoreの共通構造体経由で受け渡す
+実装順序は **Core → Engines → Display** を推奨する（下位層から上位層へ）。
 
 ---
 
-## 19. データ更新ポリシー
+## 8. Performance & Update Policy
 
-| データ種別 | 更新間隔 |
+| 分析対象 | 更新間隔 | 理由 |
+|---|---|---|
+| Currency Strength | 1秒 | FX短期トレンドの即時追従 |
+| Equity Index / Gold | 5秒 | ボラティリティ監視 |
+| Bond | 10秒 | マクロ金利動向の監視 |
+| Economic Events / Market Open | 60秒 | タイマーカウントダウン制御 |
+
+### 8.1 実装上の重要な注意点
+- 毎ティック全銘柄を再計算しない。`GetTickCount()`等で前回更新時刻を記録し、間隔を超えた時だけ再計算する
+- チャートオブジェクトは`ObjectDelete`→`ObjectCreate`を毎回繰り返さない。`ObjectFind`で存在確認し、無ければ作成、あれば値だけ更新する
+- 初回起動時はヒストリーデータが揃っていないことがあるため、「データが揃うまで待って一括描画」というフラグ管理（`g_dataReady`等）を各エンジンに用意する
+- 週末・市場休止中は新規ティックが来ないため、価格依存の処理は止まってよいが、カウントダウン等の時間依存処理は`OnTimer()`で別途動かす
+
+（詳細な数値目標は32章 Performance Benchmarkで定義する）
+
+---
+
+## 9. Coding & Architecture Standards
+
+### 9.1 命名規則
+| 対象 | 規約 |
 |---|---|
-| 通貨強弱 | 1秒毎 |
-| 株価指数 | 5秒毎 |
-| Gold | 5秒毎 |
-| 債券 | 10秒毎 |
-| 経済指標イベント | 60秒毎 |
-| マーケットオープン | 60秒毎 |
+| クラス名 | 先頭に`C`（例：`CAssetDetection`, `CCurrencyStrength`） |
+| メンバー変数 | 先頭に`m_`（例：`m_goldSymbol`） |
+| グローバル変数 | 先頭に`g_`（例：`g_logger`） |
+| 入力パラメータ | 先頭に`Inp`（例：`InpUpdateInterval`） |
+| 主要メソッド | 役割を表す動詞で統一（`Detect()`, `Validate()`, `Calculate()`, `Draw()`） |
+| ファイル名 | PascalCase |
+| コメント | 日本語可 |
+| ヘッダー | すべての`.mqh`冒頭に役割説明を記載 |
+
+### 9.2 追加推奨事項
+- チャートオブジェクト名はモジュールごとに一意なプレフィックス（例：`GMD_Rank_`, `GMD_Flow_`）を付け、`OnDeinit()`で`ObjectsDeleteAll`により確実に削除する
+- MT5の`GlobalVariable`を使う場合、プレフィックスにインジケーター名＋バージョンを含め、他インジケーターとの衝突を避ける
 
 ---
 
-## 20. シンボル優先順位（Symbol Priority）
+## 10. Development Roadmap & Milestones
 
-例：Gold
+```text
+ [Ver2.11 (基盤&核心部)] → [Ver2.20 (分析拡張)] → [Ver2.30 (マクロ統合)] → [Ver3.00+]
+  Core → Engines → Display    Regime/Flow           Events/Modes          Advanced
 ```
-XAUUSD → GOLD → GOLDmicro → XAUUSD.r
-```
 
-この優先順位リストは`Core/AssetDetection.mqh`内で銘柄カテゴリごとに定義し、**設定ファイルまたは入力パラメータで上書きできる**ようにしておくと、未知のブローカー表記にも対応しやすい。
-
----
-
-## 21. 設定項目（Settings）
-
-- Update Interval（更新間隔）
-- Currency Timeframe（通貨強弱判定に使う時間足）
-- Color Theme（配色テーマ）
-- Display Mode（11章の4モード）
-- Auto Detect Symbols（銘柄自動検出のON/OFF）
-- Show Events（経済指標表示のON/OFF）
-- Show Market Open（マーケットオープン表示のON/OFF）
+| バージョン | 内容 |
+|---|---|
+| Ver2.11 | Core構築（AssetDetection/Logger/Utils）→ Engines構築（CurrencyStrength/BestPair/Confidence）→ Display構築（Dashboard基本表示） |
+| Ver2.20 | Money Flow / Market Regime / Asset Detection拡張 |
+| Ver2.30 | Market Open / Economic Events / Display Mode |
+| Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
+| Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
 
 ---
 
-## 22. 用語集（Glossary）
+## 📖 用語集（Glossary）
 
 | 用語 | 説明 |
 |---|---|
@@ -395,73 +562,135 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 | Money Flow | 市場間の資金循環 |
 | Confidence | 売買シグナルの信頼度 |
 | Market Regime | 市場全体の状態（Risk ON/OFF/Neutral） |
+| Asset Detection | ブローカー固有の銘柄名を識別・検証し、全エンジン共通フォーマットに正規化する層 |
+| Availability | 銘柄・データが存在しない場合にシステム停止を防ぐフォールバック設計 |
+| Liquidity Score | Money Flow Engineが算出する、現金化圧力／リスク選好度の判定指標 |
 
 ---
 
-## 23. コーディング規約（Coding Standards）
+## 29. Class Diagram（新設）
 
-| 対象 | 規約 |
+```text
+                 ┌─────────────────────┐
+                 │   CAssetDetection    │
+                 │  (Core / Data Layer) │
+                 └──────────┬───────────┘
+                            │ 提供
+      ┌─────────────────────┼─────────────────────┐
+      ▼                     ▼                     ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│CCurrencyStrength│   │  CMoneyFlow    │   │ CMarketRegime  │
+└───────┬────────┘   └───────┬────────┘   └───────┬────────┘
+        │                    │                     │
+        └─────────┬──────────┴──────────┬──────────┘
+                   ▼                     ▼
+             ┌───────────┐       ┌──────────────┐
+             │ CBestPair │       │ CConfidence   │
+             └─────┬──────┘       └──────┬────────┘
+                   │                      │
+                   └──────────┬───────────┘
+                              ▼
+                     ┌─────────────────┐
+                     │   CDashboard     │
+                     │ (Display Layer)  │
+                     └─────────────────┘
+```
+
+- `CDashboard`は全Engineインスタンスを保持し、`OnCalculate`／`OnTimer`から各`Calculate()`→`Draw()`を呼び出す司令塔
+- Engine同士は直接依存せず、必要なデータは`CAssetDetection`と、Engineの`Get〜()`メソッド経由でのみ受け渡す
+
+---
+
+## 30. Data Flow（新設）
+
+```text
+[OnInit]
+   └→ CAssetDetection.Initialize()  … Symbol Scan〜Cache（1回のみ）
+
+[OnCalculate / OnTimer]
+   └→ 更新間隔チェック（8章の更新ポリシーに従う）
+        └→ CCurrencyStrength.Calculate()
+        └→ CMoneyFlow.Calculate()
+        └→ CMarketRegime.Calculate()
+        └→ CConfidence.Calculate(cs, mf, mr, momentum)
+        └→ CBestPair.Calculate(cs, assetDetection)
+   └→ CDashboard.Draw()  … 上記すべての Get〜() を読み取って画面更新
+```
+
+- データは常に「Engineが計算→Dashboardが読み取る」の一方向。Dashboard側からEngineの内部状態を書き換えることはしない
+- `OnCalculate`は価格ティックに依存するため、市場休止中は呼ばれない。カウントダウン等の時間依存表示は`OnTimer`を別途使用する（8章参照）
+
+---
+
+## 31. Error Handling（新設）
+
+| ケース | 対応方針 |
 |---|---|
-| クラス | `CMarketRegime`、`CCurrencyStrength`のようにPascalCase＋`C`プレフィックス |
-| 変数 | メンバ変数`m_`、グローバル変数`g_`、入力パラメータ`Inp`プレフィックス |
-| 関数 | `Calculate()`、`Update()`、`Draw()`、`Detect()`のように役割を表す動詞で統一 |
-| ファイル名 | PascalCase |
-| コメント | 日本語可 |
-| ヘッダー | すべての`.mqh`ファイル冒頭に、役割を説明するコメントを記載する |
-
-### 23.1 追加推奨事項
-- チャートオブジェクト名は、モジュールごとに一意なプレフィックス（例：`GMD_Rank_`, `GMD_Flow_`）を付け、`OnDeinit()`で`ObjectsDeleteAll`により確実に削除できるようにする
-- グローバル変数（MT5の`GlobalVariable`）を使う場合は、プレフィックスにインジケーター名＋バージョンを含め、他のインジケーターとの衝突を避ける
+| 銘柄が存在しない | `CAssetDetection`が`Unavailable`フラグを立て、依存するEngineはその銘柄をスコア計算から除外する（クラッシュさせない） |
+| ヒストリーデータ不足（本数不足） | 該当エンジンは「準備中」状態を保持し、必要本数が揃うまで計算をスキップする |
+| `CopyRates`等の戻り値が-1 | `GetLastError()`を`Logger.mqh`経由で記録し、当該ティックはスキップして次回に再試行する |
+| 週末・市場休止 | 価格依存処理は自然に停止するが、パネル自体は最後の状態を表示し続ける（ブランクにしない） |
+| 複数チャートでの同時起動 | オブジェクト名・GlobalVariable名にインジケーター固有プレフィックスを必須化し、衝突を防ぐ（9.2章） |
+| 入力パラメータの不正値（重み合計≠100%等） | `OnInit`内でバリデーションし、不正な場合は既定値にフォールバックしてログに警告を出す（`INIT_SUCCEEDED`は維持し、動作は止めない） |
 
 ---
 
-## 24. 将来的な分析エンジン（Future Analytics Engine）
+## 32. Performance Benchmark（新設）
 
-- 統計分析（相関・クラスタリング）
-- 機械学習によるMarket Pattern検出
-- Money Rotation（資金循環）分析
-- Correlation Engine（相関エンジン）
-- Probability / Recommendation（確率・推奨）
+実装後、以下の指標を計測し記録する（目標値は開発初期の暫定値。実測して調整する）。
 
----
-
-## 25. 開発ロードマップ
-
-| バージョン | 内容 |
+| 指標 | 目標値 |
 |---|---|
-| Ver2.11 | Currency Strength / Best Pair / Dashboard / Confidence |
-| Ver2.20 | Money Flow / Market Regime / Asset Detection |
-| Ver2.30 | Market Open / Economic Events / Display Mode |
-| Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
-| Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
+| 1ティックあたりの処理時間（全Engine合計） | 10ms未満 |
+| チャートオブジェクト総数 | 200個未満 |
+| メモリ使用量の増加（24時間稼働後） | ほぼ横ばい（リークなし） |
+| OnInit完了までの時間（Asset Detection含む） | 3秒未満 |
+
+計測方法：`GetMicrosecondCount()`を`OnCalculate`の開始・終了に仕込み、`Logger.mqh`経由で定期的にログ出力する。
 
 ---
 
-## 26. テスト・QA計画（新規追加）
-
-旧仕様書に欠けていた項目。実運用前に最低限、以下を検証する。
+## 33. Test Plan（26章から拡張・新設）
 
 | 項目 | 確認内容 |
 |---|---|
-| 銘柄非対応時の挙動 | 一部銘柄がブローカーに存在しない場合でもクラッシュせず、該当項目を「データなし」表示にできるか |
-| 週末・市場休止中の挙動 | 新規ティックが来ない状態で、ダッシュボードがフリーズしないか |
-| 初回起動時の挙動 | ヒストリーデータ未取得の状態で、エラーや空白パネルにならないか |
-| 複数チャートでの同時起動 | 同じインジケーターを複数チャートで起動した際、オブジェクト名・グローバル変数が衝突しないか |
-| 長時間稼働 | 数日間放置した際にメモリリーク・オブジェクト数の増加がないか |
-| 高負荷時のパフォーマンス | 全28ペア＋主要資産を同時監視した状態でのCPU負荷・遅延 |
+| 銘柄非対応時の挙動 | 一部銘柄がブローカーに存在しない場合でもクラッシュせず「N/A」表示にできるか |
+| 週末・市場休止中の挙動 | 新規ティックが来ない状態でダッシュボードがフリーズしないか |
+| 初回起動時の挙動 | ヒストリーデータ未取得の状態でエラーや空白パネルにならないか |
+| 複数チャートでの同時起動 | オブジェクト名・GlobalVariableが衝突しないか |
+| 長時間稼働 | 数日間放置でメモリリーク・オブジェクト数増加がないか |
+| 高負荷時のパフォーマンス | 全28ペア＋主要資産を同時監視した状態でのCPU負荷・遅延（32章の目標値と比較） |
+| フォールバック再配分 | Confidence Engineで1エンジンのデータが欠損した際、重みが正しく再配分されるか |
+| Best Pair逆順処理 | 最強/最弱の組み合わせが逆順でしか存在しない場合、方向解釈が正しく反転するか |
+| 複数ブローカーでの動作確認 | 少なくとも2〜3社の異なるブローカー環境で、Asset Detectionが正しく解決できるか |
 
 ---
 
-## 27. 未確定事項（Open Issues）
+## 34. Release Checklist（新設）
 
-改善にあたり、以下は仕様として未確定のため、開発着手前に確定させることを推奨する。
+Ver2.11リリース前に、以下を確認する。
 
-1. Currency Strength Engineの得点方式（非対称加点 vs 対称加点）
-2. Money Flow Engineの「流入/中立/流出」を分けるしきい値の具体的な数値
-3. Market Regime Engineの各指標の重み付け初期値
-4. Confidence Engineの各エンジンへの重み配分
-5. 経済指標カレンダーのデータソース
+- [ ] 33章のTest Planを全て実施し、致命的な不具合がない
+- [ ] 27章（旧）／本書の未確定事項（35章 Known Limitations）が解消済み、または既知の制限として明記されている
+- [ ] `CHANGELOG.md`に変更内容を記載
+- [ ] 全入力パラメータにコメント（説明文）が付与されている
+- [ ] User Manual（別紙）が最新の機能に対応している
+- [ ] コンパイル時に0 errors, 0 warningsであること
+- [ ] デモ口座で最低1週間の実地動作確認を行っている
 
 ---
 
-以上、v0.2として改訂した。次のステップとしては、27章の未確定事項を先に決め、その後Ver2.11の実装（Currency Strength / Best Pair / Dashboard / Confidence）に着手するのが良いと思います。
+## 35. Known Limitations / 未確定事項（27章を統合・拡張）
+
+| # | 内容 | 状態 |
+|---|---|---|
+| 1 | Money Flow Engineの↑/→/↓を分けるしきい値（`InpFlowThresholdPct`）の具体的な初期値 | 未確定（暫定0.3%） |
+| 2 | Market Regime Engineの9指標それぞれの重み初期値 | 未確定（経験則で仮設定、Ver4.00で最適化予定） |
+| 3 | Liquidity Score（Cash Preference / Risk-Seeking）の判定を4条件一致数でスコア化する具体的な計算式 | 未確定 |
+| 4 | 経済指標カレンダーのデータソース | 未確定（カレンダーAPI／手動登録／MT5標準流用のいずれか要選定） |
+| 5 | Currency Strength Engineの対称/非対称スコアリングどちらを既定にするか | `InpSymmetricScoring`で両対応済みだが、既定値は非対称のまま。運用しながら決定 |
+| 6 | 複数ブローカー環境での実機テスト | 未実施（34章のRelease Checklistに含めた） |
+
+---
+
+以上、v1.0 Draftとして再構成した。次のアクションとしては、35章の未確定事項（特に#1〜#3の具体的なしきい値・重み）を先に仮決定し、7章のディレクトリ構成に沿って `Core/AssetDetection.mqh` から実装に着手するのが良いと思います。
