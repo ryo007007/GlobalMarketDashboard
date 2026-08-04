@@ -1,1 +1,2384 @@
+[GlobalMarketDashboard_Spec_v1.2_draft.md](https://github.com/user-attachments/files/30691544/GlobalMarketDashboard_Spec_v1.2_draft.md)
+
+# Global Market Dashboard Ultimate Edition — プロジェクト仕様書
+
+| 項目 | 内容 |
+|---|---|
+| Project | Global Market Dashboard Ultimate |
+| Platform | MetaTrader 5 (MT5) |
+| Language | MQL5 |
+| Repository | GlobalMarketDashboard |
+| Current Version | 2.11 Ultimate (Development) |
+| Document Version | Project Specification **v1.2 Draft** |
+| Author | Ryoutarou Kadono |
+| Status | In Development（実装フェーズ / Ver2.11 着手中） |
+| Last Update | 2026-08-04 |
+
+> **本書の位置づけ**：本書はGMDの単一の正（Single Source of Truth）である。実装・レビュー・将来の機能追加は、すべて本書を起点とする。
+>
+> **本書は完成版ではない。** コードを書けば必ず「この仕様の方が良い」が出てくる。それが正常であり、そのたびに本書を更新して `v1.1` → `v1.2` → `v2.0` と育てていく。仕様書が更新されないプロジェクトは、設計書とコードが乖離して最終的に設計書が捨てられる。**更新されることを前提に書いてある**（35.5参照）。
+
+---
+
+## 目次
+
+**Part I — プロジェクト定義**
+1. プロジェクト概要　2. 開発目的　3. 設計思想　4. システム概要
+
+**Part II — 分析エンジン仕様**
+5. Currency Strength Engine　6. Money Flow Engine　7. Market Regime Engine
+8. Confidence Engine　9. Best Pair Engine　10. Asset Detection（概要）
+
+**Part III — 表示仕様**
+11. 表示モード　12. マーケットオープン　13. 経済指標イベント
+14. ダッシュボードレイアウト　15. 色分けルール
+
+**Part IV — 実装基盤**
+16. パフォーマンス設計　17. バージョン履歴　18. モジュール構成
+19. データ更新ポリシー　20. シンボル優先順位　21. 設定項目
+22. 用語集　23. コーディング規約
+
+**Part V — 計画**
+24. 将来的な分析エンジン　25. 開発ロードマップ
+
+**Part VI — 詳細設計（実装者向け）**
+26. Asset Detection Flow　27. Test Plan　28. 未確定事項
+29. Class Diagram　30. Data Flow　31. Error Handling
+32. Performance Benchmark　33. Release Checklist
+34. Known Limitations　35. ドキュメント体系とリポジトリ構成
+
+**付録**
+A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
+
+---
+
+## 0. 本書の読み方（Document Conventions）
+
+### 0.1 章の共通構成
+
+Part II（5〜10章）の各エンジン章は、すべて同じ順序で記述する。目的の議論と実装の詳細を混ぜないための規約である。
+
+| 節 | 内容 | 読む人 |
+|---|---|---|
+| x.1 Purpose | 何のための機能か。1〜3文で言い切る | 全員 |
+| x.2 Inputs | 入力データと前提条件。表で明記 | 実装者 |
+| x.3 Calculation | 計算式・判定ロジック | 実装者 |
+| x.4 Output | 出力する値と型 | 実装者 |
+| x.5 Display | 画面上での見え方 | 実装者・利用者 |
+| x.6 Class Interface | `.mqh` のクラス定義 | 実装者 |
+| x.7 Implementation Notes | 落とし穴と対策 | 実装者 |
+| x.8 Future Expansion | 将来の拡張余地 | 全員 |
+
+### 0.2 用語・記法の統一
+
+| 表記 | 用途 | 例 |
+|---|---|---|
+| `Inp_〜` | 入力パラメータ | `Inp_StrengthTimeframe` |
+| `g_〜` | グローバル変数 | `g_assets` |
+| `m_〜` | メンバ変数 | `m_score[]` |
+| `C〜` | クラス | `CCurrencyStrength` |
+| `S〜` | 構造体 | `SAssetInfo` |
+| `ENUM_〜` | 列挙型 | `ENUM_ASSET_STATE` |
+| `GMD_〜` | チャートオブジェクト名 | `GMD_Rank_USD` |
+
+以下の語は本書内で意味を固定する。混用しない。
+
+| 用語 | 定義 | 混同しやすい語 |
+|---|---|---|
+| **アセット（Asset）** | GMDが扱う論理的な資産。`ASSET_GOLD` 等 | 銘柄 |
+| **銘柄（Symbol）** | ブローカーが提供する実際の名前。`XAUUSD.a` 等 | アセット |
+| **スコア（Score）** | 各エンジンが出す生の数値 | 信頼度 |
+| **信頼度（Confidence）** | スコアの確からしさ。0〜100% | スコア |
+| **レジーム（Regime）** | 市場全体の状態。Risk ON/OFF/Neutral | シグナル |
+| **状態（State）** | アセットの可用性。OK/Pending/Stale/Unavailable | レジーム |
+
+### 0.3 実装フェーズの表記
+
+本書は Ver4.00 までを見据えた設計を含む。**設計として書いてあること = 今すぐ作ること、ではない。** 各機能には実装フェーズを併記する。
+
+| 表記 | 意味 |
+|---|---|
+| `[2.11]` | Ver2.11 で実装する。**今作るのはこれだけ** |
+| `[2.20]` | Ver2.20 で実装する。設計だけ先に固めてある |
+| `[2.30+]` | それ以降。方向性のみ |
+
+**実装者は `[2.11]` の箇所だけを見れば作業できる。** 先の設計を書いてあるのは、後から追加したときに構造を壊さないためであり、今すぐ全部作るためではない。
+
+### 0.4 要求レベルの表記
+
+| 表記 | 意味 |
+|---|---|
+| **必須** | 実装しなければVer2.11は完成としない |
+| **推奨** | 実装するべき。省略する場合は理由を28章に記録する |
+| **任意** | 余力があれば |
+
+### 0.5 解釈優先順位（Conflict Resolution）
+
+本書は「最終形の設計」と「現時点で実装する範囲」を同時に記述しているため、章によって粒度が異なる。読み違いを防ぐため、記述が衝突した場合は以下の優先順位で解釈する。
+
+1. **25.1 Ver2.11 の完成定義**：現在のリリースで何を作るかの最終決定
+2. **各章のフェーズ表記 `[2.11]` / `[2.20]` / `[2.30+]`**：実装タイミングの決定
+3. **各章本文の設計説明**：最終形の意図と責務の説明
+4. **付録のコードスケルトン**：実装補助。本文と矛盾する場合は本文を優先する
+
+**実装者向けの実務ルール**：迷ったら「その機能は25.1に含まれているか」を先に確認する。含まれていなければ、設計として読んでもVer2.11では実装対象外とみなす。
+
+---
+
+## 1. プロジェクト概要
+
+Global Market Dashboard Ultimate（以下GMD）は、単一銘柄・単一市場を分析する通常のインジケーターではなく、**FX・株価指数・貴金属・暗号資産・債券という複数の市場を横断し、市場間の資金の流れと相互関係を1画面で可視化する統合マーケット分析ダッシュボード**である。
+
+コンセプトは以下の1文に集約される。
+
+> 「相場を見る」のではなく、「世界のお金の流れを見る」
+
+GMDは、価格そのものではなく「今、資金がどこからどこへ動いているか」を数値化し、トレーダーが数秒で市場全体の地合いを把握できる状態を目指す。
+
+---
+
+## 2. 開発目的
+
+1. 複数市場（FX・株価指数・貴金属・暗号資産・債券）の状態を1画面で同時に把握できるようにする
+2. 通貨強弱・資金フロー・リスクオン/オフといった「市場の空気感」を定量化し、裁量判断の根拠を数値で補強する
+3. 手動で複数のチャート・複数のインジケーターを見比べる手間を削減する
+4. 将来的な統計・相関分析・機械学習への拡張を見据えた、保守しやすいモジュール構成にする
+
+---
+
+## 3. 設計思想（Design Philosophy）
+
+- **1画面完結**：チャートを切り替えなくても市場全体の状態が分かること
+- **数値化優先**：「なんとなく強い/弱い」ではなく、スコア・パーセンテージという形で根拠を残すこと
+- **軽量であること**：多数の銘柄・多数の指標を同時に扱うため、CPU負荷とオブジェクト数を常に意識すること（詳細は16章）
+- **壊れにくいこと**：ブローカーごとの銘柄表記の違い、週末のデータ欠損、通貨ペアの非存在など、実運用で必ず起きる例外を前提に設計すること（詳細は9章・26章）
+- **止めないこと**：検出できない銘柄があっても、インジケーター全体は動き続けること。欠損は「エラー」ではなく「Unavailable という状態」として扱い、縮退運転（Graceful Degradation）で表示を継続する（詳細は26.8）
+
+---
+
+## 4. システム概要
+
+GMDの**最終形**は以下の5つの分析エンジンと、それらを束ねるダッシュボード表示層で構成される。
+
+| エンジン | 役割 |
+|---|---|
+| Currency Strength Engine | 主要7通貨・28通貨ペアの強弱をスコア化 |
+| Money Flow Engine | 株式・貴金属・暗号資産・債券などアセット間の資金流出入を判定 |
+| Market Regime Engine | 複数指標を合成し、Risk ON / Risk OFF / Neutralを判定 |
+| Confidence Engine | 各エンジンの一致度から、シグナル全体の信頼度を算出 |
+| Best Pair Engine | 通貨強弱から、最も分かりやすいトレンドが出やすい通貨ペアを提案 |
+
+これらの結果を `Display/Dashboard.mqh` が受け取り、選択された表示モード（11章）に応じて画面に描画する。
+
+> **実装スコープ注意**：上表は最終アーキテクチャである。**Ver2.11で実装するのは `AssetDetection` / `Currency Strength` / `Best Pair` / `Confidence` / `Dashboard基本表示` のみ**とし、`Money Flow` と `Market Regime` はインターフェースや章立てだけを先に確保する（詳細は25.1）。
+
+> **設計ルール**：未実装エンジンは「将来追加される前提の予約席」として扱う。クラス名・章番号・UI領域を先に確保してもよいが、Ver2.11ではダミー計算や未完成表示を入れて完成扱いにしない。
+
+---
+
+## 5. 通貨強弱エンジン（Currency Strength Engine）
+
+### 5.1 Purpose
+
+主要7通貨の相対的な強弱を数値化し、「今どの通貨に資金が向かっているか」を一目で判断できるようにする。GMDで最初に完成させる中核エンジンであり、Best Pair・Confidence の入力元でもある。
+
+### 5.2 Inputs
+
+| 入力 | 型 | 取得元 | 必須 | 備考 |
+|---|---|---|---|---|
+| 対象通貨 | `string[7]` | 固定定義 | 必須 | USD / EUR / JPY / GBP / CHF / AUD / CAD |
+| 対象通貨ペア | `SFxPair[28]` | `CAssetDetection` | 必須 | 実在するペアのみ。26.6.4 |
+| 判定時間足 | `ENUM_TIMEFRAMES` | `Inp_StrengthTimeframe` | 必須 | 既定 M1 |
+| 判定本数 | `int` | `Inp_StrengthBars` | 必須 | 既定 1（直近の確定足のみ） |
+| 対称加点スイッチ | `bool` | `Inp_SymmetricScoring` | 任意 | 既定 false |
+
+**前提条件**：`CAssetDetection::GetFxPairCount() >= 20`。これを下回る場合は計算せず `IsReady()` が false を返す（26.8 の最低稼働要件）。
+
+### 5.3 Calculation
+
+各通貨ペアについて、**直近の確定済みバー**（形成中の最新足は使わない）の始値と終値を比較する。
+
+```text
+for each pair in availablePairs:
+    open  = iOpen(pair.symbol,  tf, 1)
+    close = iClose(pair.symbol, tf, 1)
+
+    if close > open:                    // 陽線
+        score[base]  += 1
+        if Inp_SymmetricScoring: score[quote] -= 1
+    else if close < open:               // 陰線
+        score[quote] += 1
+        if Inp_SymmetricScoring: score[base]  -= 1
+    // 同値は加点なし
+
+    ※ pair.inverted == true の場合は base / quote を入れ替えて適用する
+```
+
+正規化スコア（他エンジンに渡す値）：
+
+\[
+\text{NormalizedScore}_c = \frac{\text{score}_c - \min(\text{score})}{\max(\text{score}) - \min(\text{score})} \times 100
+\]
+
+分母が0（全通貨同点）の場合は全通貨50とする。ゼロ除算対策は**必須**。
+
+> **設計メモ**：既定は「勝った側だけに加点」する非対称ロジック。対称ロジック（勝ち+1・負け-1）は `Inp_SymmetricScoring` で切り替えられるようにし、実運用で比較してから既定値を確定する。28章の未確定事項1に対応。
+
+### 5.4 Output
+
+| 出力 | 型 | 範囲 | 利用先 |
+|---|---|---|---|
+| 生スコア | `int[7]` | 0〜6（非対称時） | 内部 |
+| 正規化スコア | `double[7]` | 0〜100 | Confidence Engine |
+| ランキング | `int[7]` | 1〜7位 | RankingPanel |
+| 最強通貨 | `string` | — | Best Pair Engine |
+| 最弱通貨 | `string` | — | Best Pair Engine |
+| 使用ペア数 | `int` | 0〜28 | Confidence Engine |
+| 準備完了フラグ | `bool` | — | Dashboard |
+
+### 5.5 Display
+
+- 7通貨をスコア降順に**横並び1行**で表示する（縦積みは画面を圧迫するため非推奨。横並びの方が視認性が高い）
+- 既定の配色は「最強＝赤、最弱＝青」のグラデーション
+- 小さいパネル上では色分けより白文字＋数字ランクの方が見やすいケースがあるため、`Inp_UseStrengthColor` で色分け自体をOFFにできること
+- 使用ペア数が20未満のときは、ランキング全体をグレーアウトし `Limited data (n/28)` を併記する
+
+### 5.6 Class Interface
+
+```cpp
+class CCurrencyStrength : public IEngine
+{
+private:
+   double   m_score[7];          // 生スコア
+   double   m_normalized[7];     // 0-100 正規化
+   int      m_rank[7];
+   int      m_pairsUsed;
+   bool     m_ready;
+
+public:
+   bool     Init(CAssetDetection *assets);
+   bool     Calculate(void);                        // IEngine
+   bool     IsReady(void)  { return m_ready; }      // IEngine
+   string   GetName(void)  { return "CurrencyStrength"; }
+
+   double   GetScore(string currency);
+   double   GetNormalizedScore(string currency);
+   int      GetRank(string currency);
+   string   GetCurrencyByRank(int rank);            // 1位〜7位
+   string   GetStrongest(void) { return GetCurrencyByRank(1); }
+   string   GetWeakest(void)   { return GetCurrencyByRank(7); }
+   int      GetPairsUsed(void) { return m_pairsUsed; }
+   double   GetSpread(void);                        // 最強-最弱の点差
+};
+```
+
+### 5.7 Implementation Notes
+
+- `iOpen()` / `iClose()` はシフト1を使う。シフト0（形成中の足）を使うと、ティックごとにランキングが入れ替わり実用にならない
+- `pair.inverted` の扱いを間違えると強弱が正反対になる。単体テストで `EURUSD` と `USDEUR` 両ケースを必ず確認する
+- 週末はすべての足が同値になり得るため、全通貨同点時の分岐を用意する
+
+### 5.8 Future Expansion
+
+- 判定を1本の陰陽線ではなく、直近N本の変化率合計に変更するモード（`Inp_StrengthMethod`）
+- 時間足を複数（M5 / H1 / H4）同時に計算し、一致度を見るマルチタイムフレーム版（Ver3.00想定）
+- ATRで正規化し、ボラティリティの違いを吸収する方式
+
+---
+
+## 6. マネーフロー・エンジン（Money Flow Engine）
+
+### 6.1 Purpose
+
+FX以外の主要市場（株価指数・貴金属・暗号資産・債券）について、資金が入ってきているか出て行っているかを判定し、市場をまたいだ資金の移動を可視化する。GMDのコンセプトを最も直接的に体現する機能である。
+
+### 6.2 Inputs
+
+| 入力 | 型 | 取得元 | 必須 | 備考 |
+|---|---|---|---|---|
+| 対象アセット | `ENUM_ASSET_ID[]` | `CAssetDetection` | 必須 | Unavailable は自動除外 |
+| 判定時間足 | `ENUM_TIMEFRAMES` | `Inp_FlowTimeframe` | 必須 | 既定 M15 |
+| 判定期間 | `int` | `Inp_FlowPeriod` | 必須 | 既定 8本 |
+| 流入判定しきい値 | `double` | `Inp_FlowThreshold` | 必須 | 既定 0.30（%） |
+| 強流入判定しきい値 | `double` | `Inp_FlowStrongThreshold` | 必須 | 既定 0.80（%） |
+
+対象カテゴリと代表アセット：
+
+| カテゴリ | アセット |
+|---|---|
+| Stocks（株価指数） | US30, NAS100, SPX500, JP225, GER40, UK100 |
+| Metals（貴金属） | Gold, Silver |
+| Crypto（暗号資産） | BTC, ETH |
+| Bonds（債券） | US10Y, US30Y |
+
+### 6.3 Calculation
+
+**変化率で正規化することが必須である。** 価格の上昇幅そのままでは、株価指数（数万）とGold（数千）とBTC（数万）で桁が違い、比較にならない。
+
+```text
+changeRate(asset) = ( Close[0] - Close[Inp_FlowPeriod] ) / Close[Inp_FlowPeriod] * 100
+
+カテゴリスコア = 利用可能なアセットの changeRate の単純平均
+```
+
+判定：
+
+| 条件 | 状態 | 記号 |
+|---|---|---|
+| `rate >= Inp_FlowStrongThreshold` | STRONG_INFLOW | ↑↑↑ |
+| `Inp_FlowThreshold <= rate` | INFLOW | ↑ |
+| `-Inp_FlowThreshold < rate < Inp_FlowThreshold` | NEUTRAL | → |
+| `rate <= -Inp_FlowThreshold` | OUTFLOW | ↓ |
+| `rate <= -Inp_FlowStrongThreshold` | STRONG_OUTFLOW | ↓↓↓ |
+
+> **しきい値の注意**：既定の0.30%はM15×8本（＝2時間）を想定した値である。時間足を変えたらしきい値も変える必要がある。将来的にはATR比での自動調整（6.8）に移行する。
+
+### 6.4 Output
+
+| 出力 | 型 | 説明 |
+|---|---|---|
+| アセット別フロー | `ENUM_FLOW_STATE[ASSET_COUNT]` | 5段階 |
+| アセット別変化率 | `double[ASSET_COUNT]` | % |
+| カテゴリ別フロー | `ENUM_FLOW_STATE[5]` | Stocks/Metals/Crypto/Bonds |
+| 有効カテゴリ数 | `int` | Confidence の入力 |
+
+### 6.5 Display
+
+- カテゴリ単位で ↑↑↑ / ↑ / →（灰）/ ↓ / ↓↓↓ を一覧表示
+- 記号の色：流入＝緑、中立＝灰、流出＝赤
+- カテゴリ内の全アセットが Unavailable の場合は `Unavailable`（暗灰）を表示し、行は消さない（26.8）
+- ツールチップで内訳（各アセットの変化率）を出せると理想的（任意）
+
+### 6.6 Class Interface
+
+```cpp
+enum ENUM_FLOW_STATE
+{
+   FLOW_STRONG_OUTFLOW = -2,
+   FLOW_OUTFLOW        = -1,
+   FLOW_NEUTRAL        =  0,
+   FLOW_INFLOW         =  1,
+   FLOW_STRONG_INFLOW  =  2,
+   FLOW_UNAVAILABLE    =  99
+};
+
+class CMoneyFlow : public IEngine
+{
+private:
+   ENUM_FLOW_STATE m_assetFlow[ASSET_COUNT];
+   double          m_changeRate[ASSET_COUNT];
+   ENUM_FLOW_STATE m_categoryFlow[5];
+   bool            m_ready;
+
+public:
+   bool             Init(CAssetDetection *assets);
+   bool             Calculate(void);
+   bool             IsReady(void) { return m_ready; }
+   string           GetName(void) { return "MoneyFlow"; }
+
+   ENUM_FLOW_STATE  GetFlow(ENUM_ASSET_ID id);
+   ENUM_FLOW_STATE  GetCategoryFlow(ENUM_ASSET_CATEGORY cat);
+   double           GetChangeRate(ENUM_ASSET_ID id);
+   string           GetFlowSymbol(ENUM_FLOW_STATE st);   // "↑↑↑" 等
+   color            GetFlowColor(ENUM_FLOW_STATE st);
+   int              GetActiveCategoryCount(void);
+};
+```
+
+### 6.7 Implementation Notes
+
+- `Close[Inp_FlowPeriod]` が0の銘柄（データ未取得）でゼロ除算が起きる。除算前に必ず `> 0` を確認する
+- 債券が Unavailable な環境が多数派である。Bonds行が常にUnavailableでも正常動作とみなす
+- カテゴリ平均は、利用可能なアセットのみで割ること（`/6` 固定にしない）
+
+### 6.8 Future Expansion
+
+- しきい値のATR自動調整（`rate / ATR%` で判定し、銘柄ごとのボラ差を吸収）
+- 出来高（`iVolume`）を加味した本来の意味でのMoney Flow指標への発展
+- Money Rotation 分析：どのカテゴリからどのカテゴリへ資金が移ったかの矢印表示（Ver3.00）
+
+---
+
+## 7. 市場レジーム・エンジン（Market Regime Engine）
+
+### 7.1 Purpose
+
+複数の市場指標を1つのスコアに合成し、市場全体が Risk ON（リスク選好）か Risk OFF（リスク回避）かを判定する。個別の銘柄ではなく「相場の空気」を数値にする層である。
+
+### 7.2 Inputs
+
+| 指標 | 寄与方向 | 既定重み | 必須 |
+|---|---|---|---|
+| SPX500 | 上昇 → Risk ON | 0.20 | 推奨 |
+| NAS100 | 上昇 → Risk ON | 0.15 | 推奨 |
+| BTC | 上昇 → Risk ON | 0.10 | 任意 |
+| ETH | 上昇 → Risk ON | 0.05 | 任意 |
+| USDJPY | 上昇 → Risk ON | 0.15 | 推奨 |
+| Gold | 上昇 → Risk OFF | −0.10 | 推奨 |
+| US10Y | 上昇 → Risk OFF | −0.10 | 任意 |
+| VIX | 上昇 → Risk OFF | −0.15 | 任意 |
+| DXY | 上昇 → Risk OFF | −0.10 | 任意 |
+
+**重み再配分ルール（必須）**：Unavailable な指標の重みは、利用可能な指標へ按分する。
+
+```text
+adjustedWeight(i) = weight(i) / Σ( 利用可能な指標の |weight| )
+```
+
+利用可能な指標が3つ未満の場合は計算せず `Regime: Insufficient data` を表示する。
+
+### 7.3 Calculation
+
+```text
+1. 各指標を直近N本（Inp_RegimePeriod、既定20）の変化率に変換
+2. 変化率を Z-score で標準化（過去M本の平均・標準偏差を使用、既定M=100）
+   z(i) = ( rate(i) - mean(i) ) / stddev(i)
+   ※ stddev が 0 の場合は z = 0 とする
+3. 加重合成
+   raw = Σ( z(i) × adjustedWeight(i) )
+4. 0〜100 にスケーリング（tanh で外れ値を圧縮する）
+   Score = ( tanh(raw) + 1 ) / 2 × 100
+```
+
+3値への変換：
+
+| Score | レジーム |
+|---|---|
+| 60以上 | Risk ON |
+| 40超〜60未満 | Neutral |
+| 40以下 | Risk OFF |
+
+重みの初期値は経験則の仮値である。Ver4.00の分析エンジンで最適化する前提とし、`Inp_RegimeWeights`（セミコロン区切り文字列）で外から変更できるようにしておく。
+
+### 7.4 Output
+
+| 出力 | 型 | 範囲 |
+|---|---|---|
+| レジームスコア | `double` | 0〜100 |
+| レジーム3値 | `ENUM_REGIME` | ON / OFF / NEUTRAL |
+| 指標別寄与度 | `double[]` | 内訳表示・デバッグ用 |
+| 使用指標数 | `int` | 0〜9 |
+
+### 7.5 Display
+
+- `Risk ON  82%` のようにレジーム名とスコアを併記
+- 色：Risk ON＝緑、Neutral＝白、Risk OFF＝赤
+- 使用指標数が減っている場合は `Risk ON 82% (5/9)` のように分母を出す（**推奨**）
+
+### 7.6 Class Interface
+
+```cpp
+enum ENUM_REGIME { REGIME_RISK_OFF = -1, REGIME_NEUTRAL = 0, REGIME_RISK_ON = 1 };
+
+class CMarketRegime : public IEngine
+{
+private:
+   double        m_score;
+   ENUM_REGIME   m_regime;
+   double        m_contribution[ASSET_COUNT];
+   double        m_weights[ASSET_COUNT];
+   int           m_usedCount;
+   bool          m_ready;
+
+public:
+   bool          Init(CAssetDetection *assets);
+   bool          Calculate(void);
+   bool          IsReady(void) { return m_ready; }
+   string        GetName(void) { return "MarketRegime"; }
+
+   double        GetScore(void)       { return m_score; }
+   ENUM_REGIME   GetRegime(void)      { return m_regime; }
+   string        GetRegimeText(void);                    // "Risk ON" 等
+   color         GetRegimeColor(void);
+   double        GetContribution(ENUM_ASSET_ID id);
+   int           GetUsedIndicatorCount(void) { return m_usedCount; }
+   bool          RebalanceWeights(void);                 // 7.2 の再配分
+};
+```
+
+### 7.7 Implementation Notes
+
+- Z-score計算には過去100本の統計が必要なため、起動直後は `IsReady()` が false になる期間がある。PENDING表示で待つこと（26.3と同じ思想）
+- `tanh` を使うのは、指標が1つ暴れただけでスコアが0や100に張り付くのを防ぐため
+- 重み再配分を忘れると、債券が取れない環境でスコアが常に低めに偏る。**AD-012相当のバグとして最優先で検証する**
+
+### 7.8 Future Expansion
+
+- レジームの継続時間を計測し「Risk ON 3時間継続」を表示
+- レジーム転換の検知とアラート（Ver3.00）
+- ヒストリカルなレジーム推移をミニチャート化
+
+---
+
+## 8. 信頼度エンジン（Confidence Engine）
+
+### 8.1 Purpose
+
+各エンジンの出力がどれだけ互いに一致しているかを評価し、「今このダッシュボードの示す方向をどれだけ信じてよいか」を0〜100%で示す。数値の確からしさを数値化する層である。
+
+### 8.2 Inputs
+
+| 入力 | 出所 | 既定重み | 正規化方法 |
+|---|---|---|---|
+| 通貨強弱の点差 | `CCurrencyStrength::GetSpread()` | 0.30 | 点差 / 最大点差 × 100 |
+| データ充足率 | `GetPairsUsed() / 28` | 0.20 | そのまま% |
+| マネーフローの一致度 | `CMoneyFlow` | 0.25 | 同方向カテゴリ数 / 有効カテゴリ数 × 100 |
+| レジームスコアの極端さ | `CMarketRegime::GetScore()` | 0.25 | `abs(score - 50) × 2` |
+
+### 8.3 Calculation
+
+```text
+Confidence(%) = Σ( normalizedInput(i) × adjustedWeight(i) )
+
+・各入力は 0〜100 に正規化してから加重平均する
+・取得できないエンジンがある場合、その重みは他へ按分する（7.2と同じルール）
+・最終値は 0〜100 にクリップする
+```
+
+判定区分：
+
+| Confidence | 表示 | 意味 |
+|---|---|---|
+| 80〜100 | High（緑） | 各エンジンが強く一致 |
+| 50〜79 | Medium（白） | 概ね一致 |
+| 0〜49 | Low（灰） | 判断材料が不足、または矛盾 |
+
+### 8.4 Output
+
+| 出力 | 型 | 説明 |
+|---|---|---|
+| 総合信頼度 | `double` | 0〜100 |
+| 内訳 | `double[4]` | 各入力の寄与。デバッグ・ツールチップ用 |
+| 判定区分 | `ENUM_CONFIDENCE_LEVEL` | High / Medium / Low |
+
+### 8.5 Display
+
+`Confidence  91%` の1行。色は判定区分に従う。内訳はツールチップで表示（**任意**）。
+
+### 8.6 Class Interface
+
+```cpp
+enum ENUM_CONFIDENCE_LEVEL { CONF_LOW, CONF_MEDIUM, CONF_HIGH };
+
+class CConfidence : public IEngine
+{
+private:
+   double  m_confidence;
+   double  m_breakdown[4];
+   bool    m_ready;
+
+public:
+   bool                   Init(CCurrencyStrength *cs, CMoneyFlow *mf, CMarketRegime *mr);
+   bool                   Calculate(void);
+   bool                   IsReady(void) { return m_ready; }
+   string                 GetName(void) { return "Confidence"; }
+
+   double                 GetConfidence(void) { return m_confidence; }
+   ENUM_CONFIDENCE_LEVEL  GetLevel(void);
+   double                 GetBreakdown(int index);
+   string                 GetBreakdownText(void);   // ログ・ツールチップ用
+};
+```
+
+### 8.7 Implementation Notes
+
+- Confidence は**他エンジンの計算完了後**に実行する。呼び出し順序を Dashboard 側で固定すること（30章のデータフロー参照）
+- 全エンジンが Unavailable の場合、Confidence は0ではなく「算出不可（`--`）」を表示する。0%とすると「確実に外れる」という誤ったメッセージになる
+
+### 8.8 Future Expansion
+
+- 過去のシグナルの的中率を記録し、実績ベースで重みを自動調整（Ver4.00）
+- 時間帯別の信頼度補正（東京時間はレンジになりやすい等）
+
+---
+
+## 9. ベストペア・エンジン（Best Pair Engine）
+
+### 9.1 Purpose
+
+通貨強弱の結果から、最もトレンドが出やすい＝最も分かりやすい通貨ペアを1つ提案する。強弱ランキングを見て自分で組み合わせを考える手間をなくす。
+
+### 9.2 Inputs
+
+| 入力 | 出所 | 必須 |
+|---|---|---|
+| 最強通貨 | `CCurrencyStrength::GetStrongest()` | 必須 |
+| 最弱通貨 | `CCurrencyStrength::GetWeakest()` | 必須 |
+| 銘柄解決関数 | `CAssetDetection::ResolvePair()` | 必須 |
+
+### 9.3 Calculation
+
+最強・最弱を単純に文字列結合しただけでは、**そのペアがブローカーに存在しない場合がある**（例：`CHFUSD` は無いが `USDCHF` はある。基軸通貨の並びは通貨ごとに慣習が決まっている）。以下のフローを**必ず**実装する。
+
+```text
+1. strongest + weakest（例 "USDJPY"）が実在するか確認
+   → CAssetDetection::FindFirstExisting() を使う（重複実装しない）
+2. 無ければ weakest + strongest（逆順）を試す
+3. 見つかった場合は inverted フラグを記録する
+4. どちらも無ければ「該当ペアなし」を明示する
+5. inverted = true のときは、方向の解釈も反転させる
+   （強い通貨が分母に来るため、そのペアの下落が「強い通貨の勝ち」を意味する）
+```
+
+### 9.4 Output
+
+| 出力 | 型 | 説明 |
+|---|---|---|
+| 推奨銘柄 | `string` | `""` なら該当なし |
+| 反転フラグ | `bool` | 逆順で解決したか |
+| 推奨方向 | `ENUM_TRADE_DIRECTION` | BUY / SELL / NONE |
+| 方向テキスト | `string` | `EURJPY BUY` 等 |
+
+### 9.5 Display
+
+- `Best Pair  EURJPY ▲` のように銘柄と方向を併記
+- 該当なしの場合は `Best Pair  N/A`
+- **表示された銘柄はクリックでチャート遷移できるようにする**（利便性が大きく向上する。`ChartOpen()` または `ChartSetSymbolPeriod()`）
+
+### 9.6 Class Interface
+
+```cpp
+enum ENUM_TRADE_DIRECTION { DIR_NONE = 0, DIR_BUY = 1, DIR_SELL = -1 };
+
+class CBestPair : public IEngine
+{
+private:
+   string                m_symbol;
+   bool                  m_inverted;
+   ENUM_TRADE_DIRECTION  m_direction;
+   bool                  m_ready;
+
+public:
+   bool                  Init(CCurrencyStrength *cs, CAssetDetection *assets);
+   bool                  Calculate(void);
+   bool                  IsReady(void) { return m_ready; }
+   string                GetName(void) { return "BestPair"; }
+
+   string                GetSymbol(void)    { return m_symbol; }
+   bool                  IsInverted(void)   { return m_inverted; }
+   ENUM_TRADE_DIRECTION  GetDirection(void) { return m_direction; }
+   string                GetDisplayText(void);      // "EURJPY BUY"
+   bool                  OpenChart(void);           // クリック時のチャート遷移
+};
+```
+
+### 9.7 Implementation Notes
+
+- 反転時の方向解釈を間違えるのは、このエンジンで最も起きやすいバグである。`USDJPY`（USD最強・JPY最弱 → BUY）と、`CHF`最強・`USD`最弱で `USDCHF` を採用したケース（→ SELL）の両方をテストする
+- 1位と7位の点差が小さい（例：1点差）ときの推奨は信頼できない。点差が `Inp_BestPairMinSpread`（既定2）未満なら `N/A` にする（**推奨**）
+
+### 9.8 Future Expansion
+
+- 上位3候補の提示（1位×7位、1位×6位、2位×7位）
+- スプレッド・スワップを考慮した実用性フィルタ
+- 過去の推奨の的中率トラッキング
+
+---
+
+## 10. アセット検出（Asset Detection）—— 概要
+
+> **重要**：本章は概要である。実装に使う詳細設計（状態モデル・データ構造・公開API・テストケース）は **26章 Asset Detection Flow** に集約した。`Core/AssetDetection.mqh` を実装する際は26章を正とする。
+
+### 10.1 Purpose
+
+ブローカーごとに異なる銘柄名の違いを吸収し、GMD内部では常に論理名（`ASSET_GOLD` 等）だけで資産を参照できるようにする。ブローカー依存コードを1ファイルに隔離するための層である。
+
+### 10.2 処理フロー
+
+旧仕様の単純な1本道フローを、**5段階パイプライン**に拡張する。
+
+```text
+Detect → Validation → Availability → Cache → Engineへ引き渡し
+```
+
+名前が見つかっただけでは不十分である。名前が存在しても、ヒストリーが0本、気配値が0、Market Watchに未登録、といった「名前だけある銘柄」が実在するため、**実際にデータが取れるかを検証する工程（Validation）を必須とする**。
+
+### 10.3 ブローカー間の表記ゆれ対応
+
+同じ資産でも銘柄名が異なるため、**優先順位付きの候補リストから最初に見つかったものを採用**する。
+
+```text
+例：Gold
+XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
+```
+
+この「候補から実在するものを探す」ロジックは Best Pair Engine（9章）とも共通化し、`Core/AssetDetection.mqh` 内の汎用関数1箇所にまとめる（重複実装を避ける）。
+
+候補リストを手書きで増やし続けるのには限界があるため、**ブローカー共通サフィックスの自動推定**（例：現在チャートが `EURUSD.a` なら `.a` を全候補に自動付与）と**正規化部分一致検索**を併用する。詳細は26.6。
+
+### 10.4 カテゴリ別 対象銘柄例
+
+| カテゴリ | 代表銘柄例 |
+|---|---|
+| FX | USDJPY, EURUSD, GBPUSD 他28ペア |
+| 貴金属 | Gold, Silver |
+| 株価指数 | SPX500, NAS100, US30, JP225, GER40, UK100 |
+| 暗号資産 | BTC, ETH |
+| 債券 | US10Y, US30Y |
+
+### 10.5 Class Interface
+
+26.10 を参照。
+
+---
+
+## 11. 画面構成・表示モード（Display Modes）
+
+> 旧仕様書の5章・12章が重複していたため、本章に統合した。
+>
+> **フェーズ注記**：本章は主に `[2.30]` の表示拡張仕様である。Ver2.11で必須なのは Dashboard の基本表示だけであり、4モードの完全実装は完成条件に含めない。
+
+| モード | 内容 |
+|---|---|
+| Mode 1: Chart | チャート＋移動平均＋BB＋Pivot（通常のチャート分析画面） |
+| Mode 2: Dashboard | Market Dashboardのみ表示（チャート要素なし） |
+| Mode 3: Hybrid | チャート＋Dashboardを同時表示 |
+| Mode 4: Minimal | 通貨強弱ランキングのみの最小表示 |
+
+モード切替は右下のボタン、または入力パラメータ`Inp_DisplayMode`から行う。
+
+---
+
+## 12. マーケットオープン・カウントダウン
+
+> **フェーズ注記**：本章は `[2.30]` の実装対象である。Ver2.11では設計参照用として保持する。
+
+東京・ロンドン・ニューヨークの各市場について、「開場中」または「開場まであとX時間X分」を表示する。
+
+- サーバー時間とセッション時刻のズレ（サマータイム含む）を考慮した計算ロジックを`Core/Utils.mqh`に共通化すること
+- 過去の開発経験上、サーバー時間とNYクローズ時刻の対応関係はブローカーごとに異なるため、**セッション境界時刻をオフセットとして入力パラメータ化**しておくと、環境が変わっても調整しやすい
+
+---
+
+## 13. 経済指標イベント（Economic Events）
+
+> **フェーズ注記**：本章は `[2.30]` の実装対象である。Ver2.11では設計参照用として保持する。
+
+- CPI・FOMCなど主要イベントまでの残り時間を表示
+- データソース（カレンダーAPI／手動登録／MT5標準のイベントカレンダー流用）を要選定
+- 更新頻度は60秒毎（19章参照）
+
+---
+
+## 14. ダッシュボード レイアウト（イメージ）
+
+```
+┌──────────────────────────────┐
+│ GLOBAL MARKET DASHBOARD      │
+├──────────────────────────────┤
+│ Risk ON        82%           │
+│ Confidence     91%           │
+│ Best Pair      EURJPY        │
+├──────────────────────────────┤
+│ Currency Strength             │
+│ USD █████                     │
+│ EUR ████                      │
+│ GBP ███                       │
+│ AUD ██                        │
+│ JPY █                         │
+├──────────────────────────────┤
+│ Money Flow                    │
+│ Stocks      ↑↑                │
+│ Gold        ↓                 │
+│ Bond        ↓                 │
+│ Crypto      ↑↑↑               │
+├──────────────────────────────┤
+│ Tokyo   OPEN                  │
+│ London  03:12                 │
+│ NewYork 09:54                 │
+├──────────────────────────────┤
+│ CPI      2h14m                │
+│ FOMC     1d03h                │
+└──────────────────────────────┘
+```
+
+表示の描画順（更新順）：Market Summary → Currency Strength → Best Pair → Money Flow → Market Open → Economic Events
+
+---
+
+## 15. 色分けルール（Color Rules）
+
+| シグナル | 色 |
+|---|---|
+| Strong Buy | 赤 |
+| Buy | オレンジ |
+| Neutral | 白 |
+| Sell | 水色 |
+| Strong Sell | 青 |
+
+> **注意**：5章の通貨強弱の色分け（最強=赤/最弱=青）と、本章のシグナル色（Strong Buy=赤/Strong Sell=青）は意味が異なるため、実装時に混同しないよう変数名・関数名を明確に分離すること（例：`GetStrengthColor()`と`GetSignalColor()`）。
+
+---
+
+## 16. パフォーマンス設計
+
+| 項目 | 方針 |
+|---|---|
+| 更新間隔 | 通貨強弱：1秒毎 or 新しいバーのみ／株価指数・Gold：5秒毎／債券：10秒毎／経済指標・市場オープン：60秒毎（20章参照） |
+| CPU負荷 | 可能な限り低く抑える |
+| オブジェクト数 | 最小限に抑える |
+| 描画方式 | 差分更新（変化があった部分だけ再描画） |
+
+### 16.1 実装上の重要な注意点（実体験より）
+
+- **毎ティック全銘柄を再計算するのは避ける**。1秒間に何度もティックが来る通貨ペアでは、`GetTickCount()`等で前回更新時刻を記録し、指定間隔を超えた時だけ再計算するタイマー方式にする
+- **オブジェクトは「作り直す」のではなく「位置・テキストだけ更新」する**。`ObjectDelete`→`ObjectCreate`を毎回繰り返すとちらつき・負荷増の原因になる。`ObjectFind`で存在確認し、無ければ作成、あれば`ObjectSetString`/`ObjectSetInteger`で更新、という設計にする
+- **初回起動時のヒストリーデータ未取得への対策**：ブローカーからのデータ取得は非同期のため、インジケーター起動直後は必要な本数のバーが揃っていないことがある。「データが揃うまで待って、揃ってから一括描画する」フラグ管理（例：`g_dataReady`）を各エンジンに用意し、揃うまでは空欄／「準備中」表示にする
+- **週末・市場休止中の挙動**：新しい価格が来ないため、ティック起動の再計算処理が走らない。市場が閉まっている間もカウントダウン表示等は動き続けられるよう、`OnTimer()`を併用し、価格更新に依存しない部分は別途タイマーで更新する
+
+---
+
+## 17. バージョン履歴
+
+| バージョン | 内容 |
+|---|---|
+| Project Specification v0.1 | 初版（本ドキュメントのベース） |
+| Project Specification v0.2 | 重複章の統合、各エンジンの計算式明文化、実装上の落とし穴と対策を追加 |
+| Project Specification v0.3 | 本改訂版。**26章 Asset Detection Flow を新設**（Detect / Validation / Availability / Cache の5段階パイプライン、状態モデル、データ構造、公開API、ログ・エラーコード、テストケース）。付録Aに `AssetDetection.mqh` 実装スケルトンを追加。Asset Detection をVer2.20から**Ver2.11の基盤として前倒し**、ロードマップを再定義 |
+| Project Specification **v1.0 Draft** | 本改訂版。全体を6パートに再構成し目次を追加。**0章「本書の読み方」**（章テンプレート・用語統一・要求レベル）を新設。5〜10章の各エンジンを Purpose / Inputs / Calculation / Output / Display / Class Interface / Implementation Notes / Future Expansion の統一構成に書き換え、全エンジンのクラス定義と入出力表を明記。**29〜35章を新設**（Class Diagram / Data Flow / Error Handling / Performance Benchmark / Release Checklist / Known Limitations / ドキュメント体系）。27章をTest Planとして3層構造に拡充。付録Bに共通データ構造リファレンスを追加 |
+| Project Specification **v1.1** | 実装者レビューを反映したスコープ調整版。**0.3「実装フェーズの表記」** を新設し、全機能に `[2.11]` / `[2.20]` / `[2.30+]` を明示。**26.0「実装フェーズ分割」** を新設し、AssetDetection を Ver2.11（Detect + Validation + Availability + Refresh）と Ver2.20（Retry / Cache / Stale）に分割。`ENUM_ASSET_ID` をVer2.11の8資産に絞り、残り6資産はコメント枠として保持。27章に **27.0 最小スモークテスト** を追加し、27.1以降を実装後に確定する暫定案と位置づけ。25.1に「Ver2.11に含めないもの」の表を追加。34章にL9〜L11、35.4に「仕様書の育て方」を追加 |
+| Project Specification **v1.2 Draft** | 仕様の読み手が迷いやすい箇所を整理した改善版。**0.5「解釈優先順位」** を新設し、25.1・フェーズ表記・付録の優先順位を明文化。4章に「最終形」と「Ver2.11実装範囲」の境界注記を追加。11〜13章にフェーズ注記を追記し、Ver2.11の完成条件と表示拡張仕様の混同を防止。4章の表示モード参照を11章へ、13章の更新頻度参照を19章へ修正。26.10 と付録Aに段階実装前提の注記を追加し、33.2のリリースチェックをVer2.11スコープに整合させた |
+
+---
+
+## 18. モジュール構成（System Modules Architecture）
+
+将来の拡張（Ver3, Ver4〜）に耐えられるよう、役割ごとにディレクトリを分離する。
+
+```text
+src/
+└── Modules/
+    ├── Engines/                  // 分析・計算ロジック
+    │   ├── CurrencyStrength.mqh  // 28通貨ペアの強弱スコア計算
+    │   ├── MoneyFlow.mqh         // アセット間の資金流出入分析
+    │   ├── MarketRegime.mqh      // Risk Score (0-100) および Risk ON/OFF判定
+    │   ├── Confidence.mqh        // 総合確信度 (0-100%) 計算
+    │   └── BestPair.mqh          // 最強vs最弱の「ベストペア」自動選定
+    │
+    ├── Display/                  // UI描画・表示制御
+    │   ├── Dashboard.mqh         // 画面全体のUIコントロール・レイアウト統括
+    │   ├── SummaryPanel.mqh      // Market Summary描画
+    │   ├── RankingPanel.mqh      // 通貨強弱ランキング描画
+    │   └── MoneyFlowPanel.mqh    // マネーフロー・アセット状況描画
+    │
+    └── Core/                     // システム共通基盤・ユーティリティ
+        ├── Types.mqh              // 全モジュール共通の列挙型・構造体・IEngine（付録B）
+        ├── AssetDetection.mqh     // ブローカー固有銘柄の自動検出（優先順位リスト方式）
+        ├── Logger.mqh             // 動作ログ・エラーハンドリング・デバッグ出力
+        └── Utils.mqh              // 配列操作・型変換・時刻計算等の汎用補助関数
+```
+
+### 18.1 モジュール間インターフェースの原則（27章と統合）
+- `Dashboard.mqh`は各Engineを**呼び出すだけ**で、計算ロジックを持たない
+- 各Engineは`Calculate()`または`Update()`を実行し、**計算結果だけ**を返す（描画処理を持たない）
+- Engine間の直接依存は最小限にし、必要なデータはCoreの共通構造体経由で受け渡す
+
+---
+
+## 19. データ更新ポリシー
+
+| データ種別 | 更新間隔 |
+|---|---|
+| 通貨強弱 | 1秒毎 |
+| 株価指数 | 5秒毎 |
+| Gold | 5秒毎 |
+| 債券 | 10秒毎 |
+| 経済指標イベント | 60秒毎 |
+| マーケットオープン | 60秒毎 |
+
+---
+
+## 20. シンボル優先順位（Symbol Priority）
+
+例：Gold
+```
+XAUUSD → GOLD → GOLDmicro → XAUUSD.r
+```
+
+この優先順位リストは`Core/AssetDetection.mqh`内で銘柄カテゴリごとに定義し、**設定ファイルまたは入力パラメータで上書きできる**ようにしておくと、未知のブローカー表記にも対応しやすい。
+
+> 全アセットの候補リスト完全版は **26.6.1** に集約した。候補を追加する際は26.6.1の表を更新し、本章は参照だけに留める（二重管理を避ける）。
+
+---
+
+## 21. 設定項目（Settings）
+
+- Update Interval（更新間隔）
+- Currency Timeframe（通貨強弱判定に使う時間足）
+- Color Theme（配色テーマ）
+- Display Mode（11章の4モード）
+- Auto Detect Symbols（銘柄自動検出のON/OFF）
+- Show Events（経済指標表示のON/OFF）
+- Show Market Open（マーケットオープン表示のON/OFF）
+
+### 21.1 Asset Detection 関連の入力パラメータ
+
+> `[2.20]` 印のものは Ver2.11 では定義せず、該当機能の実装時に追加する。**使わないパラメータを先に並べると、利用者が設定に迷う。**
+
+| パラメータ名 | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `Inp_AutoDetectSymbols` | bool | true | falseにすると以下の手動指定のみを使う |
+| `Inp_SymbolSuffix` | string | "" | ブローカー共通サフィックスの手動指定。空なら自動推定（26.6.2） |
+| `Inp_SymbolPrefix` | string | "" | ブローカー共通プレフィックスの手動指定 |
+| `Inp_OverrideGold` | string | "" | Goldの銘柄名を強制指定（検出失敗時の逃げ道） |
+| `Inp_OverrideIndices` | string | "" | 指数の強制指定。`US30=DJ30;NAS100=USTEC` 形式のセミコロン区切り |
+| `Inp_OverrideCrypto` | string | "" | 暗号資産の強制指定。同形式 |
+| `Inp_ValidationMinBars` | int | 100 | Validationで要求する最小バー本数（26.7） |
+| `Inp_ValidationMaxAgeSec` | int | 86400 | `[2.20]` 最終ティックがこれ以上古ければStale判定（週末考慮で24h） |
+| `Inp_CacheTTLMinutes` | int | 0 | `[2.20]` キャッシュの有効期限。0 = セッション中は無期限（26.9） |
+| `Inp_CachePersist` | bool | true | `[2.20]` 検出結果を永続化し、次回起動を瞬時化 |
+| `Inp_DetectLogLevel` | enum | INFO | 検出処理のログ粒度（OFF/ERROR/WARN/INFO/DEBUG） |
+| `Inp_ShowUnavailable` | bool | true | 未対応銘柄を `Unavailable` として表示するか、行ごと非表示にするか |
+
+---
+
+## 22. 用語集（Glossary）
+
+| 用語 | 説明 |
+|---|---|
+| Risk ON | 投資家がリスク資産へ資金を移す状態 |
+| Risk OFF | 投資家が安全資産へ資金を移す状態 |
+| Money Flow | 市場間の資金循環 |
+| Confidence | 売買シグナルの信頼度 |
+| Market Regime | 市場全体の状態（Risk ON/OFF/Neutral） |
+
+---
+
+## 23. コーディング規約（Coding Standards）
+
+| 対象 | 規約 |
+|---|---|
+| クラス | `CMarketRegime`、`CCurrencyStrength`のようにPascalCase＋`C`プレフィックス |
+| 変数 | メンバ変数`m_`、グローバル変数`g_`、入力パラメータ`Inp`プレフィックス |
+| 関数 | `Calculate()`、`Update()`、`Draw()`、`Detect()`のように役割を表す動詞で統一 |
+| ファイル名 | PascalCase |
+| コメント | 日本語可 |
+| ヘッダー | すべての`.mqh`ファイル冒頭に、役割を説明するコメントを記載する |
+
+### 23.1 追加推奨事項
+- チャートオブジェクト名は、モジュールごとに一意なプレフィックス（例：`GMD_Rank_`, `GMD_Flow_`）を付け、`OnDeinit()`で`ObjectsDeleteAll`により確実に削除できるようにする
+- グローバル変数（MT5の`GlobalVariable`）を使う場合は、プレフィックスにインジケーター名＋バージョンを含め、他のインジケーターとの衝突を避ける
+
+---
+
+## 24. 将来的な分析エンジン（Future Analytics Engine）
+
+- 統計分析（相関・クラスタリング）
+- 機械学習によるMarket Pattern検出
+- Money Rotation（資金循環）分析
+- Correlation Engine（相関エンジン）
+- Probability / Recommendation（確率・推奨）
+
+---
+
+## 25. 開発ロードマップ
+
+| バージョン | 内容 |
+|---|---|
+| Ver2.11 | **Core基盤（AssetDetection〈Detect + Validation〉/ Logger / Utils）** + Currency Strength / Best Pair / Confidence / Dashboard基本表示。対象8資産 + FX28ペア |
+| Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel + **AssetDetection の Cache / Retry / Stale** + 対象資産6種追加（GER40 / UK100 / US10Y / US30Y / DXY / VIX） |
+| Ver2.30 | Market Open / Economic Events / Display Mode |
+| Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
+| Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
+
+### 25.1 Ver2.11 の完成定義（Definition of Done）
+
+Ver2.11は「全部入り」を目指さず、**上に積める土台を完成させるバージョン**と位置づける。以下がすべて安定稼働した時点で完成とする。
+
+1. シンボル自動検出（26.0の[2.11]範囲）が、最低2社以上の異なるブローカー環境で動作する
+2. 未対応銘柄があってもクラッシュせず `Unavailable` 表示で継続する
+3. 通貨強弱・ランキング・Best Pair・Confidence が整合した値を表示する
+4. Dashboardがちらつきなく差分更新される
+5. 24時間連続稼働でオブジェクト数・メモリが増え続けない
+
+**Ver2.11に含めないもの（意図的な除外）**
+
+| 除外するもの | 送り先 |
+|---|---|
+| Money Flow / Market Regime | Ver2.20 |
+| AssetDetection の Cache / Retry / Stale判定 | Ver2.20 |
+| GER40 / UK100 / US10Y / US30Y / DXY / VIX の検出 | Ver2.20 |
+| 本格的なテスト計画（27.1〜27.5） | Ver2.11完成後に整備 |
+| Market Open / Economic Events / 表示モード切替 | Ver2.30 |
+
+土台を先に固める方が、結果的に長く使えるソフトになる。**「作れるから作る」ではなく「今必要だから作る」で判断する。**
+
+---
+
+## 26. Asset Detection Flow（詳細設計）
+
+> 本章はVer2.11の最初の実装対象である `Core/AssetDetection.mqh` の完全仕様である。このモジュールは全エンジンの上流に位置し、ここが不安定だと下流すべてが崩れる。したがって、最も厳密に仕様を固める。
+>
+> **ただし、本章のすべてをVer2.11で作るわけではない。** 26.0のフェーズ分割に従うこと。
+
+### 26.0 実装フェーズ分割
+
+Detect / Validation / Availability / Cache / Retry をすべて同時に作ると、どこで失敗しているのかが切り分けられなくなる。**Ver2.11では「検出して、使えるかを判定する」までを完成させ、キャッシュと再試行はVer2.20に回す。**
+
+| 機能 | フェーズ | 理由 |
+|---|---|---|
+| Detect（優先順位リスト検索 + サフィックス推定） | **[2.11]** | これが無いと何も始まらない |
+| Validation（4ゲート検証） | **[2.11]** | 「使えるか」の判定は必須 |
+| Availability（OK / Unavailable / Pending の3状態） | **[2.11]** | 表示に必要 |
+| Refresh（手動再検出） | **[2.11]** | 実装が容易で、開発中のデバッグに有用 |
+| Retry（PENDING の自動再試行） | `[2.20]` | 起動直後の同期待ちは Refresh で代替できる |
+| Cache（L1メモリ / L2 CSV永続化） | `[2.20]` | 起動が0.5秒遅いだけ。まず正しく動くことが先 |
+| Stale判定（最終更新の鮮度チェック） | `[2.20]` | 週末表示の改善であり、必須ではない |
+
+#### Ver2.11 で作るパイプライン（簡略版）
+
+```text
+OnInit()
+   ↓
+[1] Detect      … 全銘柄一覧取得 → サフィックス推定 → 候補名で照合
+   ↓
+[2] Validation  … SymbolSelect → 同期確認 → 気配値 → バー本数
+   ↓
+[3] Availability… OK / PENDING / UNAVAILABLE を確定
+   ↓
+[4] Engineへ引き渡し
+```
+
+**Ver2.11 では毎回フル検出する。** 銘柄数2,000で500ms程度であり、起動時1回だけなら許容範囲である。
+
+#### 状態モデルの扱い
+
+26.3では5状態を定義するが、**Ver2.11で実際に使うのは `UNKNOWN` / `OK` / `PENDING` / `UNAVAILABLE` の4つ**である。`STALE` はenumに定義だけしておき、判定ロジックはVer2.20で実装する。定義を先に入れておけば、後から状態を追加するときに `switch` 文を書き換えずに済む。
+
+#### アセット範囲
+
+Ver2.11の検出対象は **Gold / Silver / US30 / NAS100 / SPX500 / JP225 / BTC / ETH の8資産 + FX 28ペア** とする。GER40・UK100・US10Y・US30Y・DXY・VIX を外すのは、**これらを消費するのが Money Flow と Market Regime（ともにVer2.20）だけ**だからである。エンジンが無いのに検出だけ実装しても、動作確認ができない。
+
+### 26.1 位置づけと責務
+
+**責務（これだけをやる）**
+
+- ブローカー固有の銘柄名を、GMD内部の論理名（`ASSET_GOLD` など）に対応付ける
+- その銘柄が**実際に使える**かを検証する
+- 結果をキャッシュし、各エンジンに**確定した銘柄名**を提供する
+
+**責務外（これはやらない）**
+
+- 価格の計算・分析（→ Enginesの仕事）
+- 画面描画（→ Displayの仕事。状態を返すだけ）
+- エラーでの処理中断（→ 常に状態を返して継続する）
+
+### 26.2 5段階パイプライン（全体フロー・最終形）
+
+> 以下はVer2.20時点の最終形である。Ver2.11では `[0] Cache復元` と `[4] Cache保存` を実装せず、常に `[1] Detect` から開始する。
+
+```text
+Terminal起動 / OnInit()
+        ↓
+[0] Cache復元判定  ── 有効なキャッシュあり ──┐
+        ↓ なし                              │
+[1] Detect（検出）                          │
+    │  シンボル全一覧取得（SymbolsTotal(false)）
+    │  サフィックス/プレフィックス自動推定       │
+    ├─ FX 28ペア検索                          │
+    ├─ Metals検索   (Gold, Silver)            │
+    ├─ Index検索    (US30/NAS100/SPX500/JP225/GER40/UK100)
+    ├─ Crypto検索   (BTC, ETH)                │
+    └─ Bond検索     (US10Y, US30Y)            │
+        ↓                                     │
+[2] Validation（検証）                        │
+    │  Market Watch登録 → 同期確認 → 気配値 → バー本数
+        ↓                                     │
+[3] Availability（可用性確定）                 │
+    │  OK / Unavailable / Stale の3状態を確定    │
+        ↓                                     │
+[4] Cache（保存）                             │
+    │  メモリ保持 + 任意で永続化                │
+        ↓ ←────────────────────────────┘
+[5] Engineへ引き渡し
+    GetSymbol(ASSET_GOLD) → "XAUUSD.a"
+    IsAvailable(ASSET_US10Y) → false
+```
+
+重要な原則：**このパイプライン全体は原則として起動時に1回だけ実行する**。`OnCalculate()` や `OnTimer()` から毎回呼ばない。
+
+### 26.3 状態モデル（これが仕様の中核）
+
+各アセットは常に以下のいずれか1つの状態を持つ。「存在する/しない」の2値ではなく**5状態**とすることで、表示側が適切なメッセージを出し分けられる。
+
+| 状態 | 値 | 意味 | Dashboard表示例 |
+|---|---|---|---|
+| `ASSET_UNKNOWN` | 0 | 未検出（初期値） | `---` |
+| `ASSET_OK` | 1 | 検出・検証ともに成功。使用可 | 通常表示 |
+| `ASSET_PENDING` | 2 | 銘柄はあるがヒストリー同期待ち | `Loading...`（灰） |
+| `ASSET_STALE` | 3 | 銘柄ありだが最終更新が古い（市場休止等） | 値を灰色表示し `*` を付与 |
+| `ASSET_UNAVAILABLE` | 4 | ブローカーに存在しない・使用不可 | `Unavailable`（暗灰） |
+
+`ASSET_PENDING` を設けているのが重要である。MT5はヒストリーを非同期で取得するため、起動直後に `ASSET_UNAVAILABLE` と確定させてしまうと、**本来使える銘柄を永久に切り捨ててしまう**。PENDINGの銘柄のみ、後述の再試行対象とする。
+
+#### 状態遷移図
+
+```text
+UNKNOWN ──Detect成功──▶ PENDING ──Validation成功──▶ OK
+   │                       │                         │
+   │                       └──タイムアウト(N回)──▶ UNAVAILABLE
+   │                                                 │
+   └──Detect失敗──▶ UNAVAILABLE                      │
+                                                     ▼
+                                   最終ティックが古い → STALE
+                                   新しいティック到着 → OKに復帰
+```
+
+### 26.4 データ構造
+
+> ここに示す型はすべて `Core/Types.mqh` に置く（付録B）。`AssetDetection.mqh` 内に直接定義しないこと。
+
+```cpp
+//--- 論理アセットID（内部では常にこのIDで参照する）
+enum ENUM_ASSET_ID
+{
+   //--- [2.11] 実装対象。まずはこの8つだけ
+   ASSET_GOLD=0, ASSET_SILVER,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
+   ASSET_BTC, ASSET_ETH,
+
+   //--- [2.20] 追加予定。今はコメントのまま残す（消さない）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
+   ASSET_COUNT               // 常に末尾。配列サイズとして使う
+};
+
+enum ENUM_ASSET_STATE { ASSET_UNKNOWN, ASSET_OK, ASSET_PENDING, ASSET_STALE, ASSET_UNAVAILABLE };
+
+enum ENUM_ASSET_CATEGORY { CAT_FX, CAT_METAL, CAT_INDEX, CAT_CRYPTO, CAT_BOND, CAT_OTHER };
+
+//--- 1アセットの検出結果
+struct SAssetInfo
+{
+   ENUM_ASSET_ID        id;            // 論理ID
+   ENUM_ASSET_CATEGORY  category;      // カテゴリ
+   string               logicalName;   // "Gold" など表示用名称
+   string               symbol;        // 検出された実銘柄名 "XAUUSD.a"
+   ENUM_ASSET_STATE     state;         // 26.3の状態
+   int                  digits;        // 小数桁数
+   int                  barsAvailable; // 検証時のバー本数
+   datetime             lastTickTime;  // 最終ティック時刻
+   datetime             detectedAt;    // 検出確定時刻（キャッシュTTL判定用）
+   int                  retryCount;    // PENDINGからの再試行回数
+   string               note;          // 失敗理由等（ログ・ツールチップ用）
+};
+
+//--- 全アセットのレジストリ（これがEngineに渡る唯一の窓口）
+struct SAssetRegistry
+{
+   SAssetInfo  assets[ASSET_COUNT];
+   string      fxPairs[28];       // 検出済みFXペアの実銘柄名
+   int         fxPairCount;       // 実際に使えたFXペア数（5.6のConfidence入力）
+   string      detectedSuffix;    // 推定されたサフィックス
+   string      detectedPrefix;    // 推定されたプレフィックス
+   datetime    builtAt;           // レジストリ構築時刻
+   int         okCount;
+   int         unavailableCount;
+};
+```
+
+> **設計意図**：エンジンは決して銘柄名を文字列リテラルで書かない。常に `GetSymbol(ASSET_GOLD)` 経由で取得する。この規約を守ることで、ブローカー依存コードが `AssetDetection.mqh` の1ファイルに完全に隔離される。
+
+### 26.5 起動シーケンス
+
+```text
+OnInit()
+  │
+  ├─ 1. Logger初期化
+  ├─ 2. g_assets.Init()          ← 候補テーブル構築（この時点ではI/Oなし）
+  ├─ 3. g_assets.LoadCache()     ← 永続化キャッシュがあれば復元
+  ├─ 4. g_assets.DetectAll()     ← Detect → Validation → Availability
+  ├─ 5. g_assets.SaveCache()
+  ├─ 6. Logger.PrintSummary()    ← 検出結果サマリをエキスパートに1回出力
+  └─ 7. EventSetTimer(1)
+
+OnTimer()  ← 1秒毎
+  └─ g_assets.RetryPending()     ← PENDINGの銘柄のみ再検証（最大60秒・30回）
+```
+
+全検出は `OnInit()` で行うが、**`OnInit()` をブロックして待たない**。`Sleep()` でヒストリー取得を待つ実装は、ターミナル全体を固まらせる原因になるため禁止とする。揃わないものはPENDINGとし、`OnTimer()` で非同期に埋める。
+
+### 26.6 Detect（検出）詳細
+
+#### 26.6.1 候補リスト方式
+
+カテゴリごとに優先順位付きの候補名を定義し、上から順に試す。
+
+| アセット | 候補（優先順） |
+|---|---|
+| Gold | `XAUUSD` → `GOLD` → `GOLDmicro` → `GOLD.spot` → `XAU/USD` |
+| Silver | `XAGUSD` → `SILVER` → `SILVERmicro` |
+| US30 | `US30` → `DJ30` → `DJI30` → `USA30` → `WS30` → `DOW` → `US30Cash` |
+| NAS100 | `NAS100` → `USTEC` → `NDX100` → `US100` → `NASDAQ` → `NAS100Cash` |
+| SPX500 | `SPX500` → `US500` → `SP500` → `USA500` → `SPX` |
+| JP225 | `JP225` → `JPN225` → `NIKKEI` → `N225` → `JP225Cash` |
+| GER40 | `GER40` → `DE40` → `DAX40` → `GER30` → `DE30` → `DAX` |
+| UK100 | `UK100` → `FTSE100` → `GB100` → `UK100Cash` |
+| BTC | `BTCUSD` → `BTCUSDT` → `BITCOIN` → `BTC/USD` → `XBTUSD` |
+| ETH | `ETHUSD` → `ETHUSDT` → `ETHEREUM` → `ETH/USD` |
+| US10Y | `US10Y` → `USTBOND10` → `TNOTE10` → `UST10Y` → `US10YT` |
+| US30Y | `US30Y` → `USTBOND` → `TBOND` → `UST30Y` |
+| DXY | `DXY` → `USDX` → `USDIDX` → `USDOLLAR` |
+| VIX | `VIX` → `VIXX` → `VOLX` → `US_VIX` |
+
+各候補には、後述のサフィックス・プレフィックスが自動的に組み合わされる。
+
+> **現実的な見通し**：債券（US10Y/US30Y）とVIXは、国内FX業者の多くでは提供されていない。**検出できないのが正常ケース**として設計し、Market Regime Engineはこれら抜きでもスコアを算出できるよう重み再配分（8.2）を行う。
+
+#### 26.6.2 サフィックス・プレフィックスの自動推定
+
+候補リストを手書きで増やすのには限界があるため、ブローカー共通の飾り文字を自動で割り出す。
+
+```text
+1. 現在チャートの _Symbol を取得        例: "EURUSD.a"
+2. 先頭から基準パターン（[A-Z]{6}）を探す  → "EURUSD"
+3. 前後に残った文字列を prefix / suffix とする → suffix=".a"
+4. 確信度検証：Market Watch全銘柄のうち、同じsuffixを持つものが
+   全体の50%以上あれば「共通サフィックス」として採用
+5. Inp_SymbolSuffix が空でなければ、自動推定より手動指定を優先
+```
+
+推定したサフィックスはすべての候補に自動適用する。つまり `XAUUSD` を試す際に `XAUUSD.a` も自動で試される。
+
+#### 26.6.3 検索の3段階フォールバック
+
+```text
+【第1段】完全一致
+    候補名 そのもの / 候補名+suffix / prefix+候補名+suffix
+    → SymbolInfoInteger(name, SYMBOL_EXIST) で確認
+         ↓ 見つからなければ
+【第2段】正規化部分一致
+    全銘柄をループし、大文字化・非英数除去した上で
+    候補名を含むものを探す（"XAU/USD" → "XAUUSD" として一致）
+    複数ヒット時は、文字列長が最短のものを採用
+    （理由："XAUUSD" と "XAUUSD_FUTURES_DEC" なら前者が目的の現物）
+         ↓ 見つからなければ
+【第3段】入力パラメータの強制指定（Inp_Override*）
+         ↓ それでもなければ
+    ASSET_UNAVAILABLE で確定（エラーにしない）
+```
+
+除外ルール：銘柄名に `FUT`, `SWAP`, `CFD_EXP`, `_DEC`, `_MAR` などの月限表記を含むものは、第2段の候補から除外する（限月物はロールオーバーで銘柄名が変わるため不適）。
+
+#### 26.6.4 FX 28ペアの検出
+
+7通貨の組み合わせ21ペアについて、**正序・逆序の両方を試し、見つかった方の向きを記録する**。
+
+```cpp
+struct SFxPair
+{
+   string base;      // "EUR"
+   string quote;     // "USD"
+   string symbol;    // 実銘柄名 "EURUSD.a"
+   bool   inverted;  // 逆序で見つかったか（強弱計算で符号反転が必要）
+   bool   available;
+};
+```
+
+`inverted` フラグはCurrency Strength Engine（5.3）とBest Pair Engine（9.3-4）の両方で使う。これをDetection層で一元管理することで、各エンジンが個別に逆序判定する重複実装を防ぐ。
+
+検出できたペア数 `fxPairCount` はConfidence Engineの入力になる（5.6）。
+
+### 26.7 Validation（検証）詳細
+
+名前が見つかっただけでは採用しない。4つのゲートを順に通す。
+
+| # | ゲート | 使うAPI | 失敗時の状態 |
+|---|---|---|---|
+| 1 | Market Watch登録 | `SymbolSelect(sym, true)` | UNAVAILABLE |
+| 2 | データ同期 | `SymbolIsSynchronized(sym)` | PENDING（再試行） |
+| 3 | 気配値の健全性 | `SymbolInfoTick(sym, tick)` で `tick.bid > 0` | PENDING |
+| 4 | ヒストリー本数 | `Bars(sym, tf) >= Inp_ValidationMinBars` | PENDING |
+
+全ゲート通過後、**鮮度チェック**を行う。
+
+```text
+if (TimeCurrent() - tick.time) > Inp_ValidationMaxAgeSec
+    → ASSET_STALE（使うが、表示に「古いデータ」印を付ける）
+else
+    → ASSET_OK
+```
+
+> **週末の扱い**：土日は全銘柄のtick.timeが古くなるため、STALEをエラー扱いしてはならない。既定の24時間は、金曜クローズ後の土曜日中まではOK扱いとなるよう意図的に長めに取っている。
+
+#### 再試行ポリシー
+
+```text
+PENDING の銘柄のみ、OnTimer()（1秒）で再検証
+初回は 1秒間隔、失敗ごとに間隔を ×1.5（指数バックオフ、上限10秒）
+最大30回 または 60秒経過で打ち切り → UNAVAILABLE で確定
+確定後も、手動再検出（ダッシュボードのRefreshボタン）でリセット可能
+```
+
+### 26.8 Availability（可用性）と縮退運転
+
+**基本方針：見つからないことはエラーではない。表示するだけ。**
+
+```text
+───────────────────────────────
+Money Flow
+  Stocks       ↑↑
+  Gold         ↓
+  Crypto       ↑↑↑
+  Bond         Unavailable      ← クラッシュしない、空白にもしない
+───────────────────────────────
+```
+
+具体規則：
+
+1. `Alert()` や `MessageBox()` で検出失敗を通知しない（起動のたびにポップアップが出るのはストレスになる）。エキスパートログに1行出すだけ
+2. `OnInit()` は検出失敗を理由に `INIT_FAILED` を返さない。返すのは致命的な問題（メモリ確保失敗等）のみ
+3. Engine側は必ず `IsAvailable(id)` を確認してから計算に入る
+4. アセットが欠けた場合、そのアセットに割り当てられていた**重みは他に再配分**する（7章・8章）
+5. カテゴリ内の全銘柄がUnavailableなら、そのパネルセクションごと非表示にしてもよい（`Inp_ShowUnavailable=false` 時）
+
+#### 最低稼働要件
+
+以下を満たさない場合のみ、ダッシュボード全体に警告バナーを出す。
+
+| 機能 | 最低要件 | 満たさない時 |
+|---|---|---|
+| Currency Strength | FXペア 20以上 | ランキングをグレーアウトし「Limited data」表示 |
+| Best Pair | Currency Strengthが有効 | `N/A` |
+| Money Flow | カテゴリ1つ以上がOK | パネル非表示 |
+| Market Regime | 入力指標 3つ以上がOK | `Regime: Insufficient data` |
+
+### 26.9 Cache（キャッシュ）詳細
+
+#### 26.9.1 なぜ必須か
+
+銘柄検索は全シンボルループ（ブローカーによっては2,000銘柄以上）を伴う。これを毎秒実行するのは完全な無駄であり、CPU負荷の主因になる。**初回のみ検出し、以降はメモリ上のレジストリを参照する。**
+
+#### 26.9.2 2層キャッシュ
+
+| 層 | 実体 | 寿命 | 目的 |
+|---|---|---|---|
+| L1：メモリ | `SAssetRegistry g_registry` | インジケーター稼働中 | 毎回の参照をO(1)にする |
+| L2：永続化 | `MQL5/Files/GMD/symbols_<broker>.csv` | ターミナル再起動を跨ぐ | 2回目以降の起動を瞬時化 |
+
+L2のキーはブローカーを一意に識別する値とする。
+
+```cpp
+string cacheKey = AccountInfoString(ACCOUNT_COMPANY) + "_" + AccountInfoString(ACCOUNT_SERVER);
+```
+
+これにより、複数のMT5を使い分けてもキャッシュが混ざらない。
+
+#### 26.9.3 CSVフォーマット
+
+```csv
+# GMD Symbol Cache v1
+# broker=XMTrading-MT5 3, saved=2026.08.04 09:30:00, suffix=
+GOLD,XAUUSD,OK,5,2026.08.04 09:29:58
+US30,US30Cash,OK,2,2026.08.04 09:29:58
+US10Y,,UNAVAILABLE,0,
+```
+
+#### 26.9.4 キャッシュ破棄（再検出）条件
+
+以下のいずれかに該当した場合、キャッシュを破棄して全検出をやり直す。
+
+1. キャッシュ内のブローカー識別キーが現在の接続先と一致しない
+2. キャッシュ保存時のGMDバージョンが現在と異なる
+3. `Inp_CacheTTLMinutes > 0` で、`builtAt` からTTLを超過した
+4. キャッシュされた銘柄名が現在 `SYMBOL_EXIST` で否定された（ブローカー側の銘柄名変更）
+5. ユーザーがRefreshボタンを押した、または検出関連の入力パラメータを変更した
+
+なお、キャッシュ復元時も**Validationのゲート1・2だけは必ず再実行する**（存在確認のみなので軽い）。全信頼はしない。
+
+### 26.10 公開API（このシグネチャを確定させる）
+
+```cpp
+class CAssetDetection
+{
+public:
+   //--- ライフサイクル
+   bool               Init(void);                 // 候補テーブル構築
+   bool               DetectAll(void);            // Detect→Validation→Availability（Ver2.11） / +Cache（Ver2.20）
+   void               RetryPending(void);         // OnTimerから毎秒呼ぶ
+   void               Refresh(void);              // キャッシュ破棄して再検出
+   void               Deinit(void);
+
+   //--- 参照（Engineが使うのは主にここ）
+   string             GetSymbol(ENUM_ASSET_ID id);        // 実銘柄名。未検出なら ""
+   bool               IsAvailable(ENUM_ASSET_ID id);      // OK or STALE なら true
+   ENUM_ASSET_STATE   GetState(ENUM_ASSET_ID id);
+   string             GetStateText(ENUM_ASSET_ID id);     // "OK" / "Unavailable" 等表示用
+   SAssetInfo         GetInfo(ENUM_ASSET_ID id);
+
+   //--- FX専用
+   int                GetFxPairCount(void);
+   string             GetFxSymbol(string base, string quote, bool &inverted);
+   bool               ResolvePair(string cur1, string cur2, string &outSymbol, bool &inverted);
+
+   //--- 汎用（Best Pair Engine と共通化・10.2参照）
+   string             FindFirstExisting(string &candidates[]);
+   string             NormalizeSymbolName(string raw);
+
+   //--- 診断
+   int                CountByState(ENUM_ASSET_STATE st);
+   string             BuildSummaryText(void);             // ログ・設定画面表示用
+};
+```
+
+**契約**
+
+- `GetSymbol()` は失敗時もクラッシュせず空文字列を返す。`NULL` は返さない
+- すべての参照系メソッドは**副作用なし**でO(1)。内部で検索を走らせない
+- `DetectAll()` はセッション中に何度呼んでも安全（冪等）
+
+### 26.11 ログ出力仕様
+
+起動時に以下のサマリをエキスパートへ**1回だけ**出力する。これがあるとブローカー変更時の切り分けが一瞬でできる。
+
+```text
+[GMD] ===== Asset Detection Summary =====
+[GMD] Broker    : XMTrading-MT5 3
+[GMD] Suffix    : (none)   Prefix: (none)
+[GMD] FX Pairs  : 28 / 28
+[GMD] Metals    : Gold=XAUUSD  Silver=XAGUSD
+[GMD] Indices   : US30=US30Cash  NAS100=USTECCash  SPX500=US500Cash
+[GMD]             JP225=JP225Cash  GER40=GER40Cash  UK100=UK100Cash
+[GMD] Crypto    : BTC=BTCUSD  ETH=ETHUSD
+[GMD] Bonds     : US10Y=(unavailable)  US30Y=(unavailable)
+[GMD] Result    : OK=12  Pending=0  Unavailable=2
+[GMD] Elapsed   : 184 ms
+[GMD] ===================================
+```
+
+ログレベルは `Inp_DetectLogLevel` で制御し、DEBUG時のみ候補ごとの試行結果を全出力する。
+
+### 26.12 エラーコード
+
+`Logger.mqh` と共有するコード体系を定義し、ログの検索性を上げる。
+
+| コード | 意味 | 重大度 |
+|---|---|---|
+| `AD-001` | 候補リストに一致する銘柄なし | WARN |
+| `AD-002` | `SymbolSelect()` 失敗 | WARN |
+| `AD-003` | 同期未完了（PENDINGへ） | INFO |
+| `AD-004` | ヒストリー本数不足 | INFO |
+| `AD-005` | ティック取得失敗・bid=0 | WARN |
+| `AD-006` | 鮮度切れ（STALE） | INFO |
+| `AD-007` | 再試行上限到達・UNAVAILABLE確定 | WARN |
+| `AD-008` | キャッシュ読み込み失敗・形式不正 | WARN |
+| `AD-009` | キャッシュ保存失敗（ファイルI/O） | WARN |
+| `AD-010` | FXペア検出数が最低要件未満 | ERROR |
+
+すべてWARN以下は処理を継続する。ERRORでもインジケーター自体は停止しない。
+
+### 26.13 パフォーマンス目標
+
+| 項目 | 目標値 | 測定方法 |
+|---|---|---|
+| 初回全検出時間（キャッシュなし・2,000銘柄環境） | 500ms 以内 | `GetMicrosecondCount()` |
+| キャッシュ復元起動 | 50ms 以内 | 同上 |
+| `GetSymbol()` 1回呼出し | 単なる配列参照で完了 | ループベンチ |
+| 定常時のCPU使用 | 検索を走らせない（ゼロ） | — |
+
+全シンボルループは `DetectAll()` 内で**1回だけ**行い、全銘柄名を一度配列に読み込んでから候補マッチを行う（アセットごとに全ループを回すのはO(n×m)になるため禁止）。
+
+### 26.14 テストケース（AssetDetection専用）
+
+| # | ケース | 期待結果 |
+|---|---|---|
+| AD-T01 | 標準的な国内FX業者（債券なし） | FX/Gold/指数がOK、債券がUnavailableで継続 |
+| AD-T02 | サフィックス付き口座（`.a` `.r` `m` 等） | サフィックスを自動推定して全銘柄検出 |
+| AD-T03 | Market Watchが空の状態で起動 | `SymbolSelect()` で自動登録され検出成功 |
+| AD-T04 | ヒストリー未取得状態で起動 | PENDING表示後、数秒でOKに遷移 |
+| AD-T05 | 土日（全市場クローズ）に起動 | クラッシュせず、24h以内ならOK扱い |
+| AD-T06 | 存在しない銘柄をOverrideで強制指定 | AD-001をログに出しUnavailable。クラッシュなし |
+| AD-T07 | 2回目起動（キャッシュあり） | 50ms以内に復元、検出ログは「from cache」 |
+| AD-T08 | キャッシュ後にブローカーを変更 | キャッシュ破棄を検知し自動で全再検出 |
+| AD-T09 | 銘柄数 3,000以上のブローカー | 初回検出 500ms以内 |
+| AD-T10 | 同インジケーターを3チャート同時起動 | キャッシュファイルの同時書き込みで破損しない |
+| AD-T11 | Refreshボタン押下 | 全状態がリセットされ再検出される |
+| AD-T12 | US10YだけUnavailableの状態でMarket Regime実行 | 重み再配分されスコアが算出される |
+
+### 26.15 実装順序（今日からの作業単位）
+
+```text
+Step 1  enum / struct 定義 だけを書いてコンパイルを通す
+        → この時点でビルドエラー0を確認
+Step 2  候補テーブル Init() を実装し、Printで中身を確認
+Step 3  全シンボル一覧の取得とログ出力（何銘柄あるか目視で確認）
+Step 4  FindFirstExisting() を実装し、Goldだけ検出させて確認
+Step 5  サフィックス自動推定を追加
+Step 6  全カテゴリのDetectを実装
+Step 7  Validation 4ゲートを追加
+Step 8  状態確定（OK / PENDING / UNAVAILABLE）と Refresh() を追加
+Step 9  BuildSummaryText() でログを整える
+────────── ここまでで Ver2.11 の AssetDetection は完成 ──────────
+Step 10 [2.20] RetryPending() を追加
+Step 11 [2.20] Cache（L1→L2の順）を追加
+Step 12 [2.20] Stale判定を追加
+```
+
+各Stepの終わりで必ずコンパイルを通し、27.0の最小スモークテストを実行してから次に進む。一気に全部書かない。**Step 9 まで到達したら、いったん手を止めてCurrency Strength Engineに移る。** AssetDetectionを100%完成させるより、エンジンまで繋げて画面に値が出る状態を早く作る方が、設計の誤りを早く発見できる。
+
+---
+
+## 27. Test Plan（テスト計画）
+
+> **本章は暫定である。** テスト項目は、コードを書く前に机上で作ると必ず的外れになる。本章の詳細はVer2.11の実装完了後に、実際に発生した不具合をもとに確定させる（そのとき本書を `v1.2` に更新する）。
+>
+> **Ver2.11の実装中に守るのは 27.0 の最小スモークテストだけでよい。**
+
+### 27.0 最小スモークテスト（[2.11] これだけは毎回やる）
+
+モジュールを1つ実装するたびに、以下5項目を確認する。所要時間は5分程度である。
+
+| # | 確認 | 合格条件 |
+|---|---|---|
+| S1 | コンパイル | 警告0・エラー0 |
+| S2 | チャートに適用 | エキスパートログにエラーが出ない |
+| S3 | 検出結果のログ出力 | 検出した銘柄名と状態が全件出力される |
+| S4 | 存在しない銘柄を含む口座で起動 | クラッシュせず `Unavailable` として継続する |
+| S5 | インジケーター削除 | チャートに `GMD_` オブジェクトが残らない |
+
+**S4とS5だけは絶対に省略しない。** この2つが、後から最も直しにくい不具合の発生源である。
+
+---
+
+以下 27.1〜27.5 は、Ver2.11完成後に整備する本格的なテスト計画の設計案である。
+
+### 27.1 テストの3層構造
+
+| 層 | 対象 | 実行方法 | 頻度 |
+|---|---|---|---|
+| L1 単体テスト | 各 `.mqh` の関数単位 | テスト用スクリプト `Tests/Test_<Module>.mq5` | モジュール実装ごと |
+| L2 結合テスト | Engine → Display の連携 | 実チャートで目視＋ログ確認 | 各バージョンの区切り |
+| L3 実環境テスト | ブローカー・時間帯・稼働時間 | 複数口座で実運用 | リリース前 |
+
+### 27.2 L1：単体テストケース
+
+| モジュール | 検証内容 |
+|---|---|
+| AssetDetection | 26.14 の AD-T01〜T12 |
+| CurrencyStrength | 陽線/陰線の加点、inverted ペアの符号、全通貨同点時のゼロ除算回避 |
+| MoneyFlow | 変化率計算、しきい値境界（ちょうど0.30%）、Close=0 時のゼロ除算回避 |
+| MarketRegime | Z-score（stddev=0時）、重み再配分の合計が1.0になるか、tanh のスケーリング |
+| Confidence | 全エンジン欠損時に `--` を返すか、0〜100 のクリップ |
+| BestPair | 正順・逆順の両解決、反転時の方向、点差不足時の N/A |
+| Utils | サマータイム跨ぎの時刻計算、文字列正規化 |
+
+### 27.3 L2：結合テストケース
+
+| 項目 | 確認内容 |
+|---|---|
+| 呼び出し順序 | AssetDetection → 各Engine → Confidence → Display の順で実行されるか（30章） |
+| 差分更新 | 値が変わっていないオブジェクトを再描画していないか |
+| 表示モード切替 | 4モードを往復してもオブジェクトが残留しないか |
+| Refresh動作 | 再検出後、全パネルが正しく再構築されるか |
+
+### 27.4 L3：実環境テストマトリクス
+
+| # | 環境 | 確認内容 |
+|---|---|---|
+| E1 | サフィックスなしの口座 | 全銘柄検出 |
+| E2 | サフィックス付き口座（`.a` `.r` `micro`） | 自動推定が効くか |
+| E3 | 債券・VIX非対応のブローカー | Unavailable表示で継続 |
+| E4 | 銘柄数3,000以上のブローカー | 初回検出500ms以内 |
+| E5 | 週末（全市場クローズ） | フリーズしない、カウントダウンは動く |
+| E6 | 初回起動（ヒストリー未取得） | 空白・エラーにならずPENDING表示 |
+| E7 | 複数チャート同時起動（3枚） | オブジェクト名・キャッシュファイルが衝突しない |
+| E8 | 72時間連続稼働 | メモリ・オブジェクト数が増え続けない |
+| E9 | 低スペックPC（2コア） | CPU負荷が許容範囲（32章の基準） |
+
+### 27.5 回帰テスト
+
+バージョンを上げるたびに、**最低限 E1・E3・E6・E7 を再実行する**。過去に直したバグが再発していないかを確認するため、修正したバグは必ず27.2の表にテストケースとして追加する。
+
+---
+
+## 28. 未確定事項（Open Issues）
+
+
+改善にあたり、以下は仕様として未確定のため、開発着手前に確定させることを推奨する。
+
+1. Currency Strength Engineの得点方式（非対称加点 vs 対称加点）
+2. Money Flow Engineの「流入/中立/流出」を分けるしきい値の具体的な数値
+3. Market Regime Engineの各指標の重み付け初期値
+4. Confidence Engineの各エンジンへの重み配分
+5. 経済指標カレンダーのデータソース
+
+### 28.1 本改訂（v0.3）で確定した事項
+
+- Asset Detection のパイプライン構成・状態モデル・公開API（26章）
+- Asset Detection をVer2.11の基盤として前倒しすること（25章）
+- 検出失敗をエラーとせず Unavailable 状態として扱う方針（3章・26.8）
+
+### 28.2 Asset Detection に関する残課題
+
+| # | 課題 | 推奨する選択 |
+|---|---|---|
+| A | DXY・VIXを必須にするか | 任意扱い。未対応ブローカーが多いため重み再配分で吸収 |
+| B | 債券が取れない環境での代替指標 | TLT等のETF、またはUSDJPYを金利プロキシとして流用するか要検討 |
+| C | キャッシュの保存先 | ファイル（CSV）を推奨。GlobalVariableは型がdoubleのみで文字列を持てないため |
+| D | マルチチャート時のキャッシュ競合 | 書き込みは最初に起動した1チャートのみに限定する案 |
+
+---
+
+## 29. Class Diagram（クラス構成）
+
+### 29.1 全体構造
+
+```text
+                       ┌─────────────────────────┐
+                       │   GlobalMarketDashboard  │  ← .mq5（エントリポイント）
+                       │   OnInit / OnCalculate   │
+                       │   OnTimer / OnDeinit     │
+                       └───────────┬─────────────┘
+                                   │ 所有
+                       ┌───────────▼─────────────┐
+                       │      CDashboard          │  Display統括
+                       └───────────┬─────────────┘
+              ┌────────────────────┼────────────────────┐
+              │                    │                    │
+     ┌────────▼───────┐  ┌─────────▼────────┐  ┌────────▼────────┐
+     │ CSummaryPanel  │  │  CRankingPanel   │  │ CMoneyFlowPanel │
+     └────────────────┘  └──────────────────┘  └─────────────────┘
+              │  参照（読むだけ・計算しない）
+   ┌──────────┴──────────────────────────────────────────┐
+   │                     IEngine（インターフェース）        │
+   └──────────┬──────────────────────────────────────────┘
+   ┌──────────┼──────────┬───────────┬───────────┐
+   │          │          │           │           │
+┌──▼───────┐ ┌▼────────┐ ┌▼────────┐ ┌▼────────┐ ┌▼─────────┐
+│CCurrency │ │CMoney   │ │CMarket  │ │CConfid  │ │CBestPair │
+│Strength  │ │Flow     │ │Regime   │ │ence     │ │          │
+└──┬───────┘ └┬────────┘ └┬────────┘ └┬────────┘ └┬─────────┘
+   └──────────┴───────────┴───────────┴───────────┘
+                          │ 全Engineが依存
+              ┌───────────▼─────────────┐
+              │    CAssetDetection       │  Core
+              └───────────┬─────────────┘
+                 ┌────────┴────────┐
+           ┌─────▼─────┐    ┌──────▼─────┐
+           │  CLogger  │    │   CUtils   │
+           └───────────┘    └────────────┘
+```
+
+### 29.2 依存の方向（重要な設計規約）
+
+```text
+Display  ──依存──▶  Engines  ──依存──▶  Core
+```
+
+- 矢印は**一方通行**である。CoreがEnginesを、EnginesがDisplayを参照してはならない
+- Engine同士の依存は Confidence → 他3エンジン、BestPair → CurrencyStrength の2つだけに限定する
+- この規約を守れば、Engineを単体でテスト用スクリプトから呼び出せる
+
+### 29.3 共通インターフェース
+
+すべてのエンジンは同じインターフェースを実装する。Dashboard側がエンジンを一律に扱えるようになり、エンジン追加時の変更箇所が減る。
+
+```cpp
+//+------------------------------------------------------------------+
+//| すべての分析エンジンが実装する共通インターフェース                 |
+//+------------------------------------------------------------------+
+interface IEngine
+{
+   bool    Calculate(void);     // 計算実行。成功でtrue
+   bool    IsReady(void);       // 表示可能な状態か
+   string  GetName(void);       // ログ用の名前
+};
+```
+
+Dashboardからの呼び出しは配列で一括処理できる。
+
+```cpp
+IEngine *engines[5] = { &g_strength, &g_flow, &g_regime, &g_bestPair, &g_confidence };
+
+for(int i=0; i<5; i++)
+{
+   if(!engines[i].Calculate())
+      g_logger.Warn(engines[i].GetName() + " calculation skipped");
+}
+```
+
+### 29.4 ファイルとクラスの対応
+
+| ファイル | クラス | 依存先 |
+|---|---|---|
+| `Core/AssetDetection.mqh` | `CAssetDetection` | Logger のみ |
+| `Core/Logger.mqh` | `CLogger` | なし |
+| `Core/Utils.mqh` | （関数群） | なし |
+| `Engines/CurrencyStrength.mqh` | `CCurrencyStrength` | AssetDetection |
+| `Engines/MoneyFlow.mqh` | `CMoneyFlow` | AssetDetection |
+| `Engines/MarketRegime.mqh` | `CMarketRegime` | AssetDetection |
+| `Engines/BestPair.mqh` | `CBestPair` | AssetDetection, CurrencyStrength |
+| `Engines/Confidence.mqh` | `CConfidence` | CurrencyStrength, MoneyFlow, MarketRegime |
+| `Display/Dashboard.mqh` | `CDashboard` | 全Engine |
+| `Display/SummaryPanel.mqh` | `CSummaryPanel` | Dashboard経由 |
+| `Display/RankingPanel.mqh` | `CRankingPanel` | Dashboard経由 |
+| `Display/MoneyFlowPanel.mqh` | `CMoneyFlowPanel` | Dashboard経由 |
+
+---
+
+## 30. Data Flow（データフロー）
+
+### 30.1 起動時（OnInit）
+
+```text
+OnInit()
+  │
+  ├─▶ CLogger::Init()
+  ├─▶ CAssetDetection::Init() → LoadCache() → DetectAll() → SaveCache()
+  │        └─ 結果：SAssetRegistry（確定した銘柄名の一覧）
+  ├─▶ 各Engine::Init(&g_assets)      ← レジストリの参照を渡すだけ
+  ├─▶ CDashboard::Init()             ← パネル枠のみ作成、値は空
+  ├─▶ CLogger::PrintSummary()
+  └─▶ EventSetTimer(1)
+```
+
+### 30.2 定常稼働時（OnTimer / OnCalculate）
+
+```text
+OnTimer()（1秒毎）
+  │
+  ├─▶ CAssetDetection::RetryPending()    ← PENDING銘柄のみ
+  │
+  ├─▶ 更新間隔チェック（19章）
+  │     通貨強弱 1秒 / 指数・Gold 5秒 / 債券 10秒 / イベント 60秒
+  │
+  ├─▶【計算フェーズ】※この順序は固定
+  │     1. CCurrencyStrength::Calculate()
+  │     2. CMoneyFlow::Calculate()
+  │     3. CMarketRegime::Calculate()
+  │     4. CBestPair::Calculate()        ← 1の結果を使う
+  │     5. CConfidence::Calculate()      ← 1〜3の結果を使う
+  │
+  └─▶【描画フェーズ】
+        CDashboard::Update()
+          ├─ CSummaryPanel::Draw()      Regime / Confidence / BestPair
+          ├─ CRankingPanel::Draw()      通貨強弱
+          ├─ CMoneyFlowPanel::Draw()    アセット別フロー
+          ├─ MarketOpen 描画
+          └─ EconomicEvents 描画
+```
+
+**計算と描画を完全に分離すること。** 計算フェーズ中に描画APIを呼ばない。これを守ると、描画だけを差し替えたり、計算結果をCSV出力するといった拡張が容易になる。
+
+### 30.3 データの受け渡し形式
+
+```text
+CAssetDetection ──[SAssetRegistry]──▶ Engines
+Engines         ──[各Engineのgetter]──▶ CDashboard
+CDashboard      ──[文字列と色]──────▶ ChartObject
+```
+
+- Engine間で構造体をコピーして渡さない。**getter経由で必要な値だけ読む**（コピーコストとメモリ増加を避ける）
+- Displayは値を加工しない。加工が必要ならEngine側にgetterを追加する
+
+### 30.4 終了時（OnDeinit）
+
+```text
+OnDeinit()
+  ├─▶ EventKillTimer()
+  ├─▶ CDashboard::Deinit()   → ObjectsDeleteAll(0, "GMD_")
+  ├─▶ CAssetDetection::SaveCache()
+  └─▶ CLogger::Deinit()      → 稼働時間・警告件数のサマリを出力
+```
+
+`OnDeinit()` でのオブジェクト削除漏れは、チャートにゴミが残る最も典型的な不具合である。プレフィックス `GMD_` での一括削除を**必須**とする。
+
+---
+
+## 31. Error Handling（エラーハンドリング方針）
+
+### 31.1 基本原則
+
+> **エラーで止めない。状態として表示する。**
+
+GMDは発注を行わない表示専用インジケーターである。したがって、データが欠けたときに「止まる」より「欠けていることを正しく見せる」方が常に正しい。
+
+### 31.2 重大度の定義
+
+| レベル | 定義 | 動作 | 出力先 |
+|---|---|---|---|
+| `DEBUG` | 開発時の詳細追跡 | 継続 | エキスパートログ（Inp_LogLevel=DEBUG時のみ） |
+| `INFO` | 正常範囲の状態変化 | 継続 | エキスパートログ |
+| `WARN` | 機能の一部が使えない | 該当機能のみ縮退 | エキスパートログ |
+| `ERROR` | 主要機能が使えない | 該当パネルを警告表示 | エキスパートログ |
+| `FATAL` | 継続不可能 | `INIT_FAILED` を返す | ログ＋Alert |
+
+**`FATAL` に該当するのはメモリ確保失敗などごく一部のみ**である。銘柄が見つからない、データが揃わない、といったものはすべて `WARN` 以下として扱う。
+
+### 31.3 エラーコード体系
+
+`<モジュール略号>-<3桁>` で統一する。
+
+| 略号 | モジュール | 割当範囲 |
+|---|---|---|
+| `AD` | AssetDetection | 001-099（26.12で定義済み） |
+| `CS` | CurrencyStrength | 101-199 |
+| `MF` | MoneyFlow | 201-299 |
+| `MR` | MarketRegime | 301-399 |
+| `CF` | Confidence | 401-499 |
+| `BP` | BestPair | 501-599 |
+| `DP` | Display | 601-699 |
+| `SY` | System / Core | 901-999 |
+
+主要コード：
+
+| コード | 意味 | 重大度 |
+|---|---|---|
+| `CS-101` | 使用可能ペアが20未満 | WARN |
+| `CS-102` | 全通貨同点（スコア差なし） | INFO |
+| `MF-201` | カテゴリ内の全アセットがUnavailable | WARN |
+| `MF-202` | 基準足のCloseが0（ゼロ除算回避） | WARN |
+| `MR-301` | 使用可能指標が3未満 | WARN |
+| `MR-302` | 標準偏差0による標準化スキップ | INFO |
+| `CF-401` | 全エンジン欠損により算出不可 | WARN |
+| `BP-501` | 正順・逆順ともに銘柄が存在しない | INFO |
+| `BP-502` | 点差不足のため推奨を見送り | INFO |
+| `DP-601` | オブジェクト作成失敗 | ERROR |
+| `SY-901` | メモリ確保失敗 | FATAL |
+
+### 31.4 Logger の最小仕様
+
+```cpp
+enum ENUM_LOG_LEVEL { LOG_OFF, LOG_ERROR, LOG_WARN, LOG_INFO, LOG_DEBUG };
+
+class CLogger
+{
+public:
+   bool   Init(ENUM_LOG_LEVEL level, bool toFile = false);
+   void   Debug(string msg);
+   void   Info (string msg);
+   void   Warn (string code, string msg);
+   void   Error(string code, string msg);
+   void   Fatal(string code, string msg);
+
+   int    GetWarnCount(void);
+   int    GetErrorCount(void);
+   void   PrintSummary(void);
+};
+```
+
+出力書式は固定する。ログを後から検索・集計できるようにするためである。
+
+```text
+[GMD][WARN][CS-101] Currency pairs available: 18/28 (limited data)
+```
+
+### 31.5 やってはいけないこと
+
+- `Alert()` / `MessageBox()` を通常のエラー通知に使う（起動のたびにポップアップが出る）
+- `Print()` を直接呼ぶ（レベル制御が効かなくなるため、必ず `CLogger` 経由）
+- 同じ警告を毎ティック出力する（**同一コードの連続出力は抑制する**。初回のみ出し、以降はカウントのみ）
+- エラー時に `ExpertRemove()` を呼ぶ
+
+---
+
+## 32. Performance Benchmark（性能基準）
+
+### 32.1 目標値
+
+| 項目 | 目標 | 上限（これを超えたら不合格） |
+|---|---|---|
+| 初回検出（キャッシュなし・2,000銘柄） | 500ms | 1,000ms |
+| 初回検出（キャッシュあり） | 50ms | 150ms |
+| 1回の全エンジン計算 | 20ms | 50ms |
+| 1回の全パネル描画（差分更新時） | 5ms | 15ms |
+| 定常時CPU使用率（4コア環境） | 1%未満 | 3% |
+| チャートオブジェクト総数 | 120以下 | 200 |
+| メモリ増加量（72時間稼働） | 0 | +5MB |
+
+### 32.2 測定方法
+
+```cpp
+ulong t0 = GetMicrosecondCount();
+g_strength.Calculate();
+ulong elapsed = GetMicrosecondCount() - t0;
+g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
+```
+
+`Inp_EnableProfiling = true` のときのみ計測コードを走らせる（**推奨**）。計測自体が負荷にならないようにする。
+
+### 32.3 負荷を作らないための実装規約
+
+| 規約 | 理由 |
+|---|---|
+| 毎ティック全銘柄を再計算しない | `GetTickCount()` で前回実行時刻を記録し、指定間隔を超えたときだけ計算する |
+| オブジェクトは作り直さず更新する | `ObjectDelete`→`ObjectCreate` の繰り返しはちらつきと負荷の原因。`ObjectFind` で存在確認し、あれば `ObjectSetString` / `ObjectSetInteger` で更新 |
+| 全シンボルループは起動時1回だけ | 26.13 |
+| 値が変わっていないなら描画しない | 前回値を保持し、差分のみ更新 |
+| `CopyClose` の呼び出し回数を最小化 | 1エンジンにつき1銘柄1回。使い回す |
+| 文字列連結をループ内で多用しない | MQL5の文字列操作は相対的に重い |
+
+### 32.4 週末・市場休止中の挙動
+
+新しいティックが来ないため、ティック駆動の処理は走らない。カウントダウン等の時刻依存表示は `OnTimer()` で更新し、**価格更新に依存しない部分を必ず分離する**。
+
+---
+
+## 33. Release Checklist（リリースチェックリスト）
+
+各バージョンをリリースする前に、以下をすべて満たしていることを確認する。チェックが1つでも欠けている場合はリリースしない。
+
+### 33.1 コード
+
+- [ ] コンパイル警告0（エラーは当然0）
+- [ ] `Print()` の直接呼び出しが残っていない（`CLogger` 経由に統一）
+- [ ] デバッグ用のコメントアウトコード・仮の数値が残っていない
+- [ ] すべての `.mqh` 冒頭に役割コメントがある（23章）
+- [ ] 命名規約（`Inp_` / `g_` / `m_` / `C` / `S`）に違反がない
+
+### 33.2 動作
+
+- [ ] 27.4 の E1・E3・E6・E7 を実行済み
+- [ ] `OnDeinit()` 後にチャートにオブジェクトが残らない
+- [ ] Ver2.11で対象とする Dashboard 基本表示で表示崩れがない（4モード完全実装はVer2.30）
+- [ ] 32.1 の性能目標を満たしている
+- [ ] 24時間以上の連続稼働を確認済み
+
+### 33.3 ドキュメント
+
+- [ ] 本仕様書のバージョン履歴（17章）を更新した
+- [ ] `CHANGELOG.md` に変更点を記載した
+- [ ] `ROADMAP.md` の該当項目にチェックを入れた
+- [ ] 新しい入力パラメータを21章に追記した
+- [ ] 未解決の問題を34章（Known Limitations）に記載した
+
+### 33.4 リリース作業
+
+- [ ] Gitタグを打つ（`v2.11.0` 形式）
+- [ ] `.ex5` をビルドして動作確認
+- [ ] 設定ファイル（`.set`）の既定値を確認
+
+---
+
+## 34. Known Limitations（既知の制約）
+
+隠さず明記する。制約を書いてあるドキュメントの方が信頼される。
+
+| # | 制約 | 理由 | 回避策 | 解消予定 |
+|---|---|---|---|---|
+| L1 | 債券（US10Y / US30Y）は多くの国内FX業者で取得できない | ブローカーが提供していない | Unavailable表示で継続。重み再配分で吸収 | 未定（ブローカー依存） |
+| L2 | VIX・DXYも同様に非対応環境が多い | 同上 | 同上 | 未定 |
+| L3 | 通貨強弱は7通貨・28ペアに固定 | 計算量と表示領域の制約 | — | Ver3.00で拡張検討 |
+| L4 | 経済指標カレンダーのデータソースが未確定 | MT5標準カレンダーはブローカーにより内容が異なる | 手動登録で暫定運用 | Ver2.30 |
+| L5 | サマータイム境界の自動判定は完全ではない | サーバー時間の扱いがブローカーごとに異なる | オフセットを入力パラメータ化 | Ver2.30 |
+| L6 | 複数チャート同時起動時、キャッシュ書き込みは1チャートのみ | ファイル競合の回避 | 2枚目以降は読み取り専用 | 検討中（28.2 D） |
+| L7 | バックテスト（ストラテジーテスター）では正しく動作しない | 他銘柄のデータ取得がテスターでは制限される | リアルタイム稼働専用として扱う | 非対応の方針 |
+| L8 | 表示は英語のみ | 実装の単純化 | — | Ver2.30で日本語表示を検討 |
+| L9 | Ver2.11では起動のたびに全銘柄を再検出する | キャッシュ未実装（26.0） | 起動が0.3〜0.5秒遅いだけ | Ver2.20 |
+| L10 | Ver2.11ではPENDINGの自動再試行を行わない | Retry未実装（26.0） | 手動Refreshで再検出 | Ver2.20 |
+| L11 | Ver2.11の検出対象は8資産 + FX28ペアのみ | 消費するエンジンがVer2.20のため | — | Ver2.20 |
+
+---
+
+## 35. ドキュメント体系とリポジトリ構成
+
+本プロジェクトは「1本のインジケーター」ではなく1つのソフトウェアプロジェクトとして扱う。したがって、コード以外の文書も同じリポジトリで管理する。
+
+### 35.1 リポジトリ構成
+
+```text
+GlobalMarketDashboard/
+├── README.md                 // プロジェクトの顔。概要・スクリーンショット・導入手順
+├── CHANGELOG.md              // バージョンごとの変更履歴
+├── ROADMAP.md                // 25章の抜粋。進捗チェックボックス付き
+├── LICENSE
+├── docs/
+│   ├── SPECIFICATION.md      // 本書
+│   ├── USER_MANUAL.md        // 利用者向け。設定項目と画面の見方
+│   ├── DEVELOPER_GUIDE.md    // 開発者向け。ビルド手順とモジュール解説
+│   └── images/               // スクリーンショット・図
+├── src/
+│   ├── GlobalMarketDashboard.mq5
+│   └── Modules/
+│       ├── Core/
+│       ├── Engines/
+│       └── Display/
+└── tests/
+    └── Test_AssetDetection.mq5 ほか
+```
+
+### 35.2 各文書の役割分担
+
+| 文書 | 読者 | 内容 | 更新タイミング |
+|---|---|---|---|
+| `README.md` | 初めて見る人 | 何ができるか・導入方法 | 機能追加時 |
+| `SPECIFICATION.md`（本書） | 開発者・将来の自分 | 仕様の唯一の正 | 設計変更時 |
+| `USER_MANUAL.md` | 利用者 | 設定と画面の見方 | UI変更時 |
+| `DEVELOPER_GUIDE.md` | 開発者 | ビルド・モジュール追加手順 | 構成変更時 |
+| `CHANGELOG.md` | 全員 | 変更履歴 | リリースごと |
+| `ROADMAP.md` | 全員 | 今後の予定と進捗 | 計画変更時 |
+
+### 35.3 バージョン番号の規約
+
+```text
+Ver <メジャー>.<マイナー><パッチ>
+     2   .   11
+```
+
+| 位置 | 上げる条件 |
+|---|---|
+| メジャー | 設計思想・アーキテクチャの大変更 |
+| マイナー | 機能追加（新エンジン・新パネル） |
+| パッチ | バグ修正・調整のみ |
+
+仕様書のバージョンは、ソフト本体とは独立して `v1.0` `v1.1` … と進める（35.4）。本体のリリースと仕様書のバージョンを一致させようとしないこと。文書は実装より先に進むことも後から追いつくこともあり、無理に同期させると更新されなくなる。
+
+### 35.4 仕様書の育て方
+
+本書を「完成させる」ことを目標にしない。**実装しながら更新し続ける文書**として扱う。
+
+```text
+v1.0 Draft  設計を一通り書き切った状態
+    ↓  実装者レビューを反映（スコープ調整）
+v1.1        ← 現在地
+    ↓  Ver2.11 実装で判明した現実を反映
+v1.2        テスト計画の確定・エラーコードの実績反映
+    ↓  Ver2.11 リリース
+v1.3        Known Limitations の更新
+    ↓  Ver2.20（Money Flow / Market Regime / Cache）
+v2.0        アーキテクチャ変更を伴う改訂
+```
+
+更新のルールは3つだけとする。
+
+| ルール | 内容 |
+|---|---|
+| 実装が仕様と違ったら、**仕様書を直す** | コード側を無理に仕様へ合わせない。実装のほうが正しいことが多い |
+| 章は消さず、**フェーズ表記を変える** | 「やらないことにした」も記録として価値がある |
+| 更新したら17章のバージョン履歴に**1行足す** | 何をいつ変えたかが追えなくなるのを防ぐ |
+
+「コードを書いたら仕様が変わった」は失敗ではなく、設計が現実と接続された証拠である。
+
+### 35.5 CHANGELOG の書式
+
+```markdown
+## [2.11.0] - 2026-XX-XX
+### Added
+- Core/AssetDetection.mqh：銘柄自動検出（Detect/Validation/Availability/Cache）
+- Currency Strength Engine（7通貨・28ペア）
+### Changed
+- Asset Detection を Ver2.20 から Ver2.11 へ前倒し
+### Fixed
+- （該当なし：初回リリース）
+### Known Issues
+- 債券未対応環境では Bond行が Unavailable（仕様書 L1）
+```
+
+---
+
+## 付録A. `Core/AssetDetection.mqh` 実装スケルトン
+
+> **実装注記**：このスケルトンは「最終形の受け皿」を含む。Ver2.11で先に着手する場合、`RetryPending()` / `LoadCache()` / `SaveCache()` / `STALE` の実処理は未実装でもよい。**重要なのは、26.0 と 25.1 のスコープに合わせて段階的に肉付けすること**である。
+
+以下は26章の仕様をそのままコードの骨格に落としたものである。Step 1（26.15）はこのとおり貼り付けてコンパイルを通すところから始める。
+
+```cpp
+//+------------------------------------------------------------------+
+//|                                              AssetDetection.mqh  |
+//|  Global Market Dashboard Ultimate                                |
+//|  役割：ブローカー固有の銘柄名を検出・検証・キャッシュし、        |
+//|        各Engineに確定した銘柄名を提供する（仕様書26章）          |
+//+------------------------------------------------------------------+
+#property strict
+
+//==================================================================
+// 1. 定義（仕様書 26.3 / 26.4）
+//==================================================================
+enum ENUM_ASSET_ID
+{
+   //--- [2.11] 実装対象
+   ASSET_GOLD=0, ASSET_SILVER,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
+   ASSET_BTC, ASSET_ETH,
+
+   //--- [2.20] 追加枠（コメントを外すだけで有効化できる）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
+   ASSET_COUNT
+};
+
+enum ENUM_ASSET_STATE
+{
+   ASSET_UNKNOWN=0, ASSET_OK, ASSET_PENDING, ASSET_STALE, ASSET_UNAVAILABLE
+};
+
+enum ENUM_ASSET_CATEGORY { CAT_FX=0, CAT_METAL, CAT_INDEX, CAT_CRYPTO, CAT_BOND, CAT_OTHER };
+
+struct SAssetInfo
+{
+   ENUM_ASSET_ID       id;
+   ENUM_ASSET_CATEGORY category;
+   string              logicalName;
+   string              symbol;
+   ENUM_ASSET_STATE    state;
+   int                 digits;
+   int                 barsAvailable;
+   datetime            lastTickTime;
+   datetime            detectedAt;
+   int                 retryCount;
+   string              note;
+};
+
+struct SFxPair
+{
+   string base, quote, symbol;
+   bool   inverted, available;
+};
+
+//==================================================================
+// 2. クラス本体
+//==================================================================
+class CAssetDetection
+{
+private:
+   SAssetInfo  m_assets[ASSET_COUNT];
+   SFxPair     m_fx[28];
+   int         m_fxCount;
+   string      m_allSymbols[];      // 全銘柄キャッシュ（ループは1回だけ）
+   int         m_allSymbolsTotal;
+   string      m_suffix, m_prefix;
+   datetime    m_builtAt;
+   bool        m_ready;
+
+   //--- 内部ヘルパー
+   void        LoadAllSymbols(void);
+   void        DetectAffixes(void);                    // 26.6.2
+   bool        DetectOne(ENUM_ASSET_ID id, string &cands[]);
+   bool        Validate(SAssetInfo &a);                // 26.7
+   void        DetectFxPairs(void);                    // 26.6.4
+   string      MakeCacheFileName(void);                // 26.9.2
+
+public:
+                     CAssetDetection(void);
+                    ~CAssetDetection(void);
+
+   bool              Init(void);
+   bool              DetectAll(void);
+   void              RetryPending(void); // [2.20]
+   void              Refresh(void);
+   void              Deinit(void);
+
+   bool              LoadCache(void);   // [2.20]
+   bool              SaveCache(void);   // [2.20]
+
+   string            GetSymbol(ENUM_ASSET_ID id);
+   bool              IsAvailable(ENUM_ASSET_ID id);
+   ENUM_ASSET_STATE  GetState(ENUM_ASSET_ID id);
+   string            GetStateText(ENUM_ASSET_ID id);
+
+   int               GetFxPairCount(void) { return m_fxCount; }
+   bool              ResolvePair(string c1, string c2, string &outSym, bool &inverted);
+
+   string            FindFirstExisting(string &candidates[]);
+   string            NormalizeSymbolName(string raw);
+
+   int               CountByState(ENUM_ASSET_STATE st);
+   string            BuildSummaryText(void);
+};
+
+//------------------------------------------------------------------
+// GetSymbol : 失敗しても空文字列を返す（絶対に落ちない）
+//------------------------------------------------------------------
+string CAssetDetection::GetSymbol(ENUM_ASSET_ID id)
+{
+   if(id < 0 || id >= ASSET_COUNT) return "";
+   if(m_assets[id].state == ASSET_OK || m_assets[id].state == ASSET_STALE)
+      return m_assets[id].symbol;
+   return "";
+}
+
+//------------------------------------------------------------------
+// FindFirstExisting : 優先順に実在確認（仕様書 26.6.3 第1段）
+//   ※ Best Pair Engine もこの関数を使うこと（10.2）
+//------------------------------------------------------------------
+string CAssetDetection::FindFirstExisting(string &candidates[])
+{
+   int n = ArraySize(candidates);
+   for(int i=0; i<n; i++)
+   {
+      string variants[3];
+      variants[0] = candidates[i];
+      variants[1] = candidates[i] + m_suffix;
+      variants[2] = m_prefix + candidates[i] + m_suffix;
+
+      for(int v=0; v<3; v++)
+      {
+         if(StringLen(variants[v]) == 0) continue;
+         if(SymbolInfoInteger(variants[v], SYMBOL_EXIST))
+            return variants[v];
+      }
+   }
+   return "";   // 見つからなくてもエラーにしない
+}
+
+//------------------------------------------------------------------
+// Validate : 4ゲート検証（仕様書 26.7）
+//------------------------------------------------------------------
+bool CAssetDetection::Validate(SAssetInfo &a)
+{
+   if(StringLen(a.symbol) == 0)
+   { a.state = ASSET_UNAVAILABLE; a.note = "AD-001 not found"; return false; }
+
+   // Gate 1 : Market Watch 登録
+   if(!SymbolSelect(a.symbol, true))
+   { a.state = ASSET_UNAVAILABLE; a.note = "AD-002 select failed"; return false; }
+
+   // Gate 2 : 同期確認
+   if(!SymbolIsSynchronized(a.symbol))
+   { a.state = ASSET_PENDING; a.note = "AD-003 not synchronized"; return false; }
+
+   // Gate 3 : 気配値
+   MqlTick tick;
+   if(!SymbolInfoTick(a.symbol, tick) || tick.bid <= 0.0)
+   { a.state = ASSET_PENDING; a.note = "AD-005 no valid tick"; return false; }
+
+   // Gate 4 : ヒストリー本数
+   int bars = Bars(a.symbol, _Period);
+   if(bars < Inp_ValidationMinBars)
+   { a.state = ASSET_PENDING; a.note = "AD-004 bars=" + IntegerToString(bars); return false; }
+
+   a.barsAvailable = bars;
+   a.lastTickTime  = tick.time;
+   a.digits        = (int)SymbolInfoInteger(a.symbol, SYMBOL_DIGITS);
+   a.detectedAt    = TimeCurrent();
+
+   // 鮮度チェック
+   if((TimeCurrent() - tick.time) > Inp_ValidationMaxAgeSec)
+   { a.state = ASSET_STALE; a.note = "AD-006 stale data"; return true; }
+
+   a.state = ASSET_OK;
+   a.note  = "";
+   return true;
+}
+
+//--- グローバルインスタンス（規約：g_ プレフィックス・23章）
+CAssetDetection g_assets;
+```
+
+> 上記は骨格であり、`DetectAll()` / `LoadCache()` / `SaveCache()` / `DetectFxPairs()` の中身は26.15のStep順に埋めていく。このファイルだけは他モジュールに一切依存させない（Loggerを除く）ことで、単体テストが可能になる。
+
+---
+
+## 付録B. 共通データ構造リファレンス
+
+本書に登場する列挙型・構造体・インターフェースを1箇所に集約したものである。**これらはすべて `Core/Types.mqh` に置き、各モジュールはこのファイルだけをインクルードする。** 型定義が複数ファイルに散らばると、後から必ず二重定義とコンパイルエラーの原因になる。
+
+```cpp
+//+------------------------------------------------------------------+
+//|                                                       Types.mqh  |
+//|  GMD共通型定義。すべてのモジュールがこれをインクルードする         |
+//+------------------------------------------------------------------+
+#property strict
+
+//========================= アセット関連 ============================
+enum ENUM_ASSET_ID
+{
+   //--- [2.11] 実装対象
+   ASSET_GOLD=0, ASSET_SILVER,
+   ASSET_US30, ASSET_NAS100, ASSET_SPX500, ASSET_JP225,
+   ASSET_BTC, ASSET_ETH,
+
+   //--- [2.20] 追加枠（コメントを外すだけで有効化できる）
+   // ASSET_GER40, ASSET_UK100,
+   // ASSET_US10Y, ASSET_US30Y,
+   // ASSET_DXY,   ASSET_VIX,
+
+   ASSET_COUNT
+};
+
+enum ENUM_ASSET_STATE     { ASSET_UNKNOWN=0, ASSET_OK, ASSET_PENDING, ASSET_STALE, ASSET_UNAVAILABLE };
+enum ENUM_ASSET_CATEGORY  { CAT_FX=0, CAT_METAL, CAT_INDEX, CAT_CRYPTO, CAT_BOND, CAT_OTHER };
+
+//========================= エンジン出力 ============================
+enum ENUM_FLOW_STATE
+{
+   FLOW_STRONG_OUTFLOW=-2, FLOW_OUTFLOW=-1, FLOW_NEUTRAL=0,
+   FLOW_INFLOW=1, FLOW_STRONG_INFLOW=2, FLOW_UNAVAILABLE=99
+};
+
+enum ENUM_REGIME            { REGIME_RISK_OFF=-1, REGIME_NEUTRAL=0, REGIME_RISK_ON=1 };
+enum ENUM_CONFIDENCE_LEVEL  { CONF_LOW=0, CONF_MEDIUM, CONF_HIGH };
+enum ENUM_TRADE_DIRECTION   { DIR_NONE=0, DIR_BUY=1, DIR_SELL=-1 };
+
+//========================= システム ================================
+enum ENUM_LOG_LEVEL   { LOG_OFF=0, LOG_ERROR, LOG_WARN, LOG_INFO, LOG_DEBUG };
+enum ENUM_DISPLAY_MODE{ MODE_CHART=0, MODE_DASHBOARD, MODE_HYBRID, MODE_MINIMAL };
+
+//========================= 構造体 ==================================
+struct SAssetInfo
+{
+   ENUM_ASSET_ID       id;
+   ENUM_ASSET_CATEGORY category;
+   string              logicalName;
+   string              symbol;
+   ENUM_ASSET_STATE    state;
+   int                 digits;
+   int                 barsAvailable;
+   datetime            lastTickTime;
+   datetime            detectedAt;
+   int                 retryCount;
+   string              note;
+};
+
+struct SFxPair
+{
+   string  base, quote, symbol;
+   bool    inverted, available;
+};
+
+struct SAssetRegistry
+{
+   SAssetInfo  assets[ASSET_COUNT];
+   SFxPair     fxPairs[28];
+   int         fxPairCount;
+   string      detectedSuffix;
+   string      detectedPrefix;
+   datetime    builtAt;
+   int         okCount;
+   int         unavailableCount;
+};
+
+//========================= インターフェース ========================
+interface IEngine
+{
+   bool    Calculate(void);
+   bool    IsReady(void);
+   string  GetName(void);
+};
+```
+
+### B.1 型の使い分け早見表
+
+| 場面 | 使う型 | 使ってはいけない書き方 |
+|---|---|---|
+| アセットを指定する | `ENUM_ASSET_ID` | `"XAUUSD"` などの文字列リテラル |
+| 銘柄名を取得する | `GetSymbol(ASSET_GOLD)` | `_Symbol` の直接加工 |
+| 可用性を判定する | `IsAvailable(id)` | `SymbolInfoInteger()` の直接呼び出し |
+| フロー方向を返す | `ENUM_FLOW_STATE` | `int` の +1 / -1 |
+| 色を返す | `GetFlowColor()` 等のgetter | Display側での色分岐のハードコード |
+
+### B.2 インクルード順序
+
+```cpp
+#include "Core/Types.mqh"          // 1. 型（依存なし）
+#include "Core/Logger.mqh"         // 2. ログ
+#include "Core/Utils.mqh"          // 3. 汎用関数
+#include "Core/AssetDetection.mqh" // 4. 銘柄検出
+#include "Engines/..."             // 5. 各エンジン
+#include "Display/..."             // 6. 表示
+```
+
+この順序を守る。逆順や相互インクルードは循環参照を生む。
+
+---
+
+以上、Project Specification v1.1 として改訂した。
+
+本書は完成版ではなく、実装しながら育てる文書である（35.4）。Ver2.11の実装で判明したことを反映して `v1.2` に更新する。
+
+次のステップは、**付録Bの `Core/Types.mqh` を作ってコンパイルを通す**こと。これが26.15のStep 1にあたる。そこからStep 9までを一直線に進め、AssetDetectionのCache・Retryには手を付けずにCurrency Strength Engineへ移る。
 
