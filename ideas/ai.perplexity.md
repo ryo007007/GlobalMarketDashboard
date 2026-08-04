@@ -1,4 +1,4 @@
-[GlobalMarketDashboard_Spec_v1.1.md](https://github.com/user-attachments/files/30688167/GlobalMarketDashboard_Spec_v1.1.md)
+[GlobalMarketDashboard_Spec_v1.2.md](https://github.com/user-attachments/files/30693766/GlobalMarketDashboard_Spec_v1.2.md)
 # Global Market Dashboard Ultimate Edition — プロジェクト仕様書
 
 | 項目 | 内容 |
@@ -8,7 +8,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.1** |
+| Document Version | Project Specification **v1.2** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-04 |
@@ -22,7 +22,7 @@
 ## 目次
 
 **Part I — プロジェクト定義**
-1. プロジェクト概要　2. 開発目的　3. 設計思想　4. システム概要
+1. プロジェクト概要　2. 開発目的　3. 設計思想　4. システム概要（Architecture Diagram）
 
 **Part II — 分析エンジン仕様**
 5. Currency Strength Engine　6. Money Flow Engine　7. Market Regime Engine
@@ -144,7 +144,84 @@ GMDは、価格そのものではなく「今、資金がどこからどこへ�
 
 ---
 
-## 4. システム概要
+## 4. システム概要（Architecture Diagram）
+
+### 4.1 全体アーキテクチャ
+
+本書を初めて読む人は、まずこの図だけ見れば全体像がつかめる。**データはMT5から入り、一方向に流れてチャートへ出る。逆流はしない。**
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                      MT5 Terminal                             │
+│         SymbolsTotal / SymbolInfoTick / CopyClose             │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ 価格・銘柄情報
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Core                                                         │
+│  ┌────────────┐  ┌──────────┐  ┌─────────────────────────┐  │
+│  │ Types.mqh  │  │ Utils    │  │  AssetDetection         │  │
+│  │ 型定義     │  │ 汎用関数 │  │  この口座で何が使えるか  │  │
+│  └────────────┘  └──────────┘  └───────────┬─────────────┘  │
+│                    ┌──────────┐             │                │
+│                    │ Logger   │◀────────────┤ 全モジュールが  │
+│                    └──────────┘             │ 使用           │
+└────────────────────────────────────────────┼────────────────┘
+                                              │ SAssetRegistry
+                                              │（使える銘柄名の一覧）
+                            ┌─────────────────┴─────────────────┐
+                            ▼                                    ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Engines（すべて IEngine を実装）                              │
+│                                                               │
+│   ┌──────────────────┐        ┌──────────────────┐          │
+│   │ CurrencyStrength │───────▶│    BestPair      │          │
+│   │  7通貨の強弱     │  強弱  │  推奨ペアを選ぶ  │          │
+│   └────────┬─────────┘        └──────────────────┘          │
+│            │                                                  │
+│   ┌────────▼─────────┐  ┌──────────────────┐                │
+│   │    MoneyFlow     │  │  MarketRegime    │                │
+│   │  資金の流出入    │  │  Risk ON / OFF   │                │
+│   └────────┬─────────┘  └────────┬─────────┘                │
+│            │                      │                          │
+│            └──────────┬───────────┘                          │
+│                       ▼                                       │
+│              ┌──────────────────┐                            │
+│              │   Confidence     │  3エンジンの一致度         │
+│              └──────────────────┘                            │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ 計算済みの値（getter経由）
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Display                                                      │
+│              ┌──────────────────┐                            │
+│              │    Dashboard     │  統括・描画の指揮のみ       │
+│              └────────┬─────────┘                            │
+│      ┌────────────────┼────────────────┐                     │
+│      ▼                ▼                ▼                     │
+│ ┌──────────┐  ┌─────────────┐  ┌───────────────┐           │
+│ │ Summary  │  │  Ranking    │  │  MoneyFlow    │           │
+│ │  Panel   │  │   Panel     │  │    Panel      │           │
+│ └──────────┘  └─────────────┘  └───────────────┘           │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ ObjectCreate / ObjectSetString
+                            ▼
+                    ┌───────────────┐
+                    │     Chart     │
+                    └───────────────┘
+```
+
+### 4.2 一行で言うと
+
+```text
+MT5 → AssetDetection → 各Engine → Confidence → Dashboard → Chart
+```
+
+- **AssetDetection が最上流**である。「この口座で何が使えるか」が決まらないと、どのエンジンも動けない
+- **Confidence は他エンジンの下流**にある。3エンジンの結果が出そろってから計算する
+- **Dashboard は計算しない。描くだけ**である
+
+### 4.3 分析エンジン一覧
 
 GMDは以下の5つの分析エンジンと、それらを束ねるダッシュボード表示層で構成される。
 
@@ -157,6 +234,18 @@ GMDは以下の5つの分析エンジンと、それらを束ねるダッシュ�
 | Best Pair Engine | 通貨強弱から、最も分かりやすいトレンドが出やすい通貨ペアを提案 |
 
 これらの結果を `Display/Dashboard.mqh` が受け取り、選択された表示モード（12章）に応じて画面に描画する。
+
+### 4.4 Ver2.11 で動く範囲
+
+上図のうち、Ver2.11で実際に動くのは以下の太線部分だけである。
+
+```text
+MT5 → AssetDetection → CurrencyStrength → BestPair → Confidence → Dashboard → Chart
+                                                          ▲
+                                       MoneyFlow / MarketRegime は Ver2.20
+```
+
+Confidence はVer2.11では入力が2つ（強弱の明確さ・データ充足率）に減るため、暫定の重み配分で動かす（8.3参照）。
 
 ---
 
@@ -815,6 +904,7 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
 | Project Specification v0.3 | 本改訂版。**26章 Asset Detection Flow を新設**（Detect / Validation / Availability / Cache の5段階パイプライン、状態モデル、データ構造、公開API、ログ・エラーコード、テストケース）。付録Aに `AssetDetection.mqh` 実装スケルトンを追加。Asset Detection をVer2.20から**Ver2.11の基盤として前倒し**、ロードマップを再定義 |
 | Project Specification **v1.0 Draft** | 本改訂版。全体を6パートに再構成し目次を追加。**0章「本書の読み方」**（章テンプレート・用語統一・要求レベル）を新設。5〜10章の各エンジンを Purpose / Inputs / Calculation / Output / Display / Class Interface / Implementation Notes / Future Expansion の統一構成に書き換え、全エンジンのクラス定義と入出力表を明記。**29〜35章を新設**（Class Diagram / Data Flow / Error Handling / Performance Benchmark / Release Checklist / Known Limitations / ドキュメント体系）。27章をTest Planとして3層構造に拡充。付録Bに共通データ構造リファレンスを追加 |
 | Project Specification **v1.1** | 実装者レビューを反映したスコープ調整版。**0.3「実装フェーズの表記」** を新設し、全機能に `[2.11]` / `[2.20]` / `[2.30+]` を明示。**26.0「実装フェーズ分割」** を新設し、AssetDetection を Ver2.11（Detect + Validation + Availability + Refresh）と Ver2.20（Retry / Cache / Stale）に分割。`ENUM_ASSET_ID` をVer2.11の8資産に絞り、残り6資産はコメント枠として保持。27章に **27.0 最小スモークテスト** を追加し、27.1以降を実装後に確定する暫定案と位置づけ。25.1に「Ver2.11に含めないもの」の表を追加。34章にL9〜L11、35.4に「仕様書の育て方」を追加 |
+| Project Specification **v1.2** | **4章に Architecture Diagram を新設**（MT5 → Core → Engines → Display → Chart の全体図、Ver2.11で動く範囲の明示）。26.0のキャッシュを **L1メモリ[2.11] / L2 CSV[2.20] / 高度な管理[3.00]** の3段階に再定義し、L1をVer2.11へ前倒し。高度なAvailability を Ver2.20、性能最適化を Ver3.00 に整理。以降、仕様書の更新は実装で判明した差分のみに絞る |
 
 ---
 
@@ -952,8 +1042,8 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 
 | バージョン | 内容 |
 |---|---|
-| Ver2.11 | **Core基盤（AssetDetection〈Detect + Validation〉/ Logger / Utils）** + Currency Strength / Best Pair / Confidence / Dashboard基本表示。対象8資産 + FX28ペア |
-| Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel + **AssetDetection の Cache / Retry / Stale** + 対象資産6種追加（GER40 / UK100 / US10Y / US30Y / DXY / VIX） |
+| Ver2.11 | **Core基盤（Types / Logger / Utils / AssetDetection〈Detect + Validation + L1キャッシュ〉）** + Currency Strength / Best Pair / Confidence / Dashboard基本表示。対象8資産 + FX28ペア |
+| Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel + **AssetDetection の L2キャッシュ / Retry / Stale / 高度なAvailability** + 対象資産6種追加（GER40 / UK100 / US10Y / US30Y / DXY / VIX） |
 | Ver2.30 | Market Open / Economic Events / Display Mode |
 | Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
 | Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
@@ -973,7 +1063,8 @@ Ver2.11は「全部入り」を目指さず、**上に積める土台を完成�
 | 除外するもの | 送り先 |
 |---|---|
 | Money Flow / Market Regime | Ver2.20 |
-| AssetDetection の Cache / Retry / Stale判定 | Ver2.20 |
+| AssetDetection の L2キャッシュ（CSV永続化）/ Retry / Stale判定 | Ver2.20 |
+| キャッシュの世代管理・並列検出などの性能最適化 | Ver3.00 |
 | GER40 / UK100 / US10Y / US30Y / DXY / VIX の検出 | Ver2.20 |
 | 本格的なテスト計画（27.1〜27.5） | Ver2.11完成後に整備 |
 | Market Open / Economic Events / 表示モード切替 | Ver2.30 |
@@ -998,9 +1089,22 @@ Detect / Validation / Availability / Cache / Retry をすべて同時に作る�
 | Validation（4ゲート検証） | **[2.11]** | 「使えるか」の判定は必須 |
 | Availability（OK / Unavailable / Pending の3状態） | **[2.11]** | 表示に必要 |
 | Refresh（手動再検出） | **[2.11]** | 実装が容易で、開発中のデバッグに有用 |
+| **Cache L1（メモリ内レジストリ）** | **[2.11]** | `SAssetRegistry` を保持すること自体がL1キャッシュである。実質コスト0 |
 | Retry（PENDING の自動再試行） | `[2.20]` | 起動直後の同期待ちは Refresh で代替できる |
-| Cache（L1メモリ / L2 CSV永続化） | `[2.20]` | 起動が0.5秒遅いだけ。まず正しく動くことが先 |
+| Cache L2（CSVへの永続化） | `[2.20]` | 起動が0.5秒遅いだけ。ファイルI/Oは不具合の温床でもある |
 | Stale判定（最終更新の鮮度チェック） | `[2.20]` | 週末表示の改善であり、必須ではない |
+| 高度なAvailability（代替銘柄への自動フォールバック） | `[2.20]` | 基本の3状態判定で当面足りる |
+| キャッシュの世代管理・自動無効化・並列検出 | `[3.00]` | 性能最適化。動くものができてから考える |
+
+#### キャッシュの3段階
+
+「キャッシュ」と一言で書くと重く見えるが、実際は3段階に分かれる。**Ver2.11で作るのは最も軽いL1だけ**である。
+
+| 段階 | 実体 | フェーズ | 実装量 |
+|---|---|---|---|
+| L1 メモリ | `SAssetRegistry` を保持し、2回目以降は `GetSymbol()` で即返す | **[2.11]** | 数行（構造体を持つだけ） |
+| L2 ファイル | `MQL5/Files/GMD/symbols_<broker>.csv` に保存・復元 | `[2.20]` | 100行程度 |
+| L3 管理 | TTL・世代・自動無効化・整合性チェック | `[3.00]` | 相応 |
 
 #### Ver2.11 で作るパイプライン（簡略版）
 
@@ -1016,7 +1120,7 @@ OnInit()
 [4] Engineへ引き渡し
 ```
 
-**Ver2.11 では毎回フル検出する。** 銘柄数2,000で500ms程度であり、起動時1回だけなら許容範囲である。
+**Ver2.11 では起動のたびにフル検出する（L2キャッシュが無いため）。** 銘柄数2,000で500ms程度であり、起動時1回だけなら許容範囲である。検出後は `SAssetRegistry`（L1）に保持するので、稼働中に再検索が走ることはない。
 
 #### 状態モデルの扱い
 
@@ -1943,7 +2047,7 @@ g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
 | L6 | 複数チャート同時起動時、キャッシュ書き込みは1チャートのみ | ファイル競合の回避 | 2枚目以降は読み取り専用 | 検討中（28.2 D） |
 | L7 | バックテスト（ストラテジーテスター）では正しく動作しない | 他銘柄のデータ取得がテスターでは制限される | リアルタイム稼働専用として扱う | 非対応の方針 |
 | L8 | 表示は英語のみ | 実装の単純化 | — | Ver2.30で日本語表示を検討 |
-| L9 | Ver2.11では起動のたびに全銘柄を再検出する | キャッシュ未実装（26.0） | 起動が0.3〜0.5秒遅いだけ | Ver2.20 |
+| L9 | Ver2.11では起動のたびに全銘柄を再検出する | L2キャッシュ（CSV永続化）が未実装（26.0） | 起動が0.3〜0.5秒遅いだけ。稼働中はL1で解決済み | Ver2.20 |
 | L10 | Ver2.11ではPENDINGの自動再試行を行わない | Retry未実装（26.0） | 手動Refreshで再検出 | Ver2.20 |
 | L11 | Ver2.11の検出対象は8資産 + FX28ペアのみ | 消費するエンジンがVer2.20のため | — | Ver2.20 |
 
@@ -2351,7 +2455,9 @@ interface IEngine
 
 ---
 
-以上、Project Specification v1.1 として改訂した。
+以上、Project Specification v1.2 として改訂した。
+
+**本書の大幅な改訂はここで一区切りとする。** これ以降は実装を主軸に置き、仕様書はコードとの差分が出た箇所だけを更新する。
 
 本書は完成版ではなく、実装しながら育てる文書である（35.4）。Ver2.11の実装で判明したことを反映して `v1.2` に更新する。
 
