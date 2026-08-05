@@ -15,9 +15,9 @@
 #property script_show_inputs
 #property strict
 
-#include "../Modules/Core/Types.mqh"
-#include "../Modules/Core/Logger.mqh"
-#include "../Modules/Core/AssetDetection.mqh"
+#include "../src/Modules/Core/Types.mqh"
+#include "../src/Modules/Core/Logger.mqh"
+#include "../src/Modules/Core/AssetDetection.mqh"
 
 //--- 入力パラメータ
 input ENUM_LOG_LEVEL Inp_LogLevel            = LOG_INFO;   // ログレベル
