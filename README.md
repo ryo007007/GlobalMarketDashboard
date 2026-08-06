@@ -28,6 +28,8 @@ Global Market Dashboard Ultimate（GMD）は、MetaTrader 5 上で
 | **Pivot** | Daily〜Yearly Pivot（Weekly 優先） | 🔜 Ver2.20+ |
 | **Market Structure** | 大波/中波/小波・200BB・サイクル位相 | 📋 Ver2.30+ |
 | **Today's Setup** | 戦略の型ガイド（シグナルではない） | 📋 Ver3.00 |
+| **Engine Manager** | 更新順の一元管理 | 📋 Ver2.20+ |
+| **Bollinger / Cycle** | BBとサイクル位相（分離予約） | 📋 Ver2.30+ |
 | **Market Regime** | Risk ON / OFF / Neutral | 🔜 Ver2.20 |
 | **Market State / Alert** | 状態畳み込み・遷移通知 | 🔜 Ver2.30 |
 | **Correlation / Statistics** | 相関・統計エンジン | 📋 Ver3.00 |

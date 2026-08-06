@@ -1,5 +1,25 @@
 # Changelog
 
+## Management Layer & Separation (v2.0 Draft)
+
+### Spec
+
+- **第44章** Engine Manager / Alert Manager
+  - Dashboard は将来 `EngineManager.CalculateAll()` のみ
+  - 通知は AlertManager → AlertEngine（分析側は音を鳴らさない）
+  - SessionEngine は新設しない（SessionClock / Manager に集約）
+- **第45章** Bollinger Engine / Cycle Engine 予約
+  - 200BB = 居場所、20BB = ボラ
+  - サイクルは位相表示。SetupGuide 統合表示例を明記
+- **実装優先度を再固定**（2.11 必須を最上位）
+
+### Code
+
+- `Core/EngineManager.mqh` / `Core/AlertManager.mqh` 骨格
+- `Engines/BollingerEngine.mqh` / `CycleEngine.mqh` 骨格
+
+---
+
 ## Market Structure & Today's Setup (2026-08-06)
 
 ### Spec (v1.9 Draft)

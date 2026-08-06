@@ -36,6 +36,7 @@
 | Symbol Cache (L2) | CSV 永続化キャッシュ |
 | Session Manager | 多市場セッション統括の受け皿を本格化 |
 | MoneyFlowPanel | Display 側の本実装 |
+| Engine Manager | CalcAll の管理層への移行（任意だが推奨） |
 
 ---
 
@@ -44,6 +45,8 @@
 | モジュール | 内容 |
 |------------|------|
 | **Market Structure** | 大波/中波/小波・200BB位置・サイクル位相 |
+| Bollinger / Cycle | 必要なら Structure から分離 |
+| Alert Manager | 通知要求の集約 |
 | Market State | Quiet / Building / Expansion / Trending の4状態 |
 | Alert Engine | 遷移検出・ヒステリシス・冷却付き通知 |
 | Price Level ↔ Alert | 接近エッジ通知・Breakout/Breakdown Watch 表示 |

@@ -50,3 +50,14 @@ docs/
 ```
 
 今は `ProjectSpecification.md` が正本なので、無理に分割しない。
+
+## 管理層・予約 Engine（v2.0）
+
+| モジュール | ファイル | 時期 | 備考 |
+|------------|----------|------|------|
+| Engine Manager | `Core/EngineManager.mqh` | 2.20+ | Ver2.11 は `CalcAll()` が同等 |
+| Alert Manager | `Core/AlertManager.mqh` | 2.30+ | 通知要求の集約 |
+| Bollinger | `Engines/BollingerEngine.mqh` | 2.30+ | 20/200BB 役割分離 |
+| Cycle | `Engines/CycleEngine.mqh` | 2.30+ | 位相。Market Structure から分離可 |
+
+Session は新規 `SessionEngine` を作らず、`SessionClock` / `SessionManager` に集約する（仕様書 44.4）。

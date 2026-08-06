@@ -43,6 +43,11 @@ Engines
    └─ StatisticsEngine : [3.00] 予約
    │
    ▼
+Core (management)
+   ├─ EngineManager   : [2.20+] 更新順・ON/OFF
+   └─ AlertManager    : [2.30+] 通知要求の集約
+   │
+   ▼
 Display
    ├─ DrawObjects      : オブジェクト生成/更新の下請け
    ├─ Dashboard        : 1枚パネルの統括・指揮

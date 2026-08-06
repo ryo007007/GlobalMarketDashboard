@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.9 Draft** |
+| Document Version | Project Specification **v2.0 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -50,6 +50,7 @@
 38. Market State Engine [2.30]　39. Alert Engine [2.30]
 40. Price Level Engine [2.20+]　41. Pivot Engine [2.20+]
 42. Market Structure Engine [2.30+]　43. Today's Setup [3.00]
+44. Engine Manager / Alert Manager　45. Bollinger Engine / Cycle Engine（予約）
 
 **付録**
 A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
@@ -267,6 +268,10 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 | Pivot Engine `[2.20+]` | Daily/Weekly/Monthly/Yearly の Pivot（PP・R1〜R3・S1〜S3）を計算し距離と接近を出す。**Weekly を優先表示** |
 | Market Structure Engine `[2.30+]` | 大波・中波・小波の階層、200BBによる「大きな居場所」、サイクル位相を一つの構造として扱う |
 | Today's Setup `[3.00]` | 複数エンジンを統合し「今日噛み合いやすい戦略の型」をガイド表示する（売買強制シグナルではない） |
+| Bollinger Engine `[2.30+]` | 20/75/100/200BB の位置と表示用データ。200BBは「大きな居場所」 |
+| Cycle Engine `[2.30+]` | サイクル位相の専用計算（Market Structure から分離可能な予約） |
+| Engine Manager `[2.20+]` | 全 Engine の初期化・更新順・ON/OFF を一箇所で管理。Dashboard はここだけ呼ぶ |
+| Alert Manager `[2.30+]` | 各 Engine からの通知要求を集約し、AlertEngine の方針（エッジ・冷却）に乗せる |
 
 Energy と Adaptive Update は厳密には分析エンジンではない。Energy は方向を出さず、Adaptive Update は市場を判定しない。だが `IEngine` の呼び出し規約に揃えておくほうが本体が単純になるため、同じ場所に置いている。
 
@@ -4094,6 +4099,8 @@ public:
 
 ### 42.9 Future Expansion
 
+- 200BB 計算の `BollingerEngine` への分離（45.1）
+- サイクル位相の `CycleEngine` への分離（45.2）
 - 波の自動時間足選択（銘柄のボラに応じて）
 - 複数銘柄の構造一覧
 - Market State（38章）への正式な入力としての接続
@@ -4197,6 +4204,165 @@ public:
 1. Ver3.00 まで本実装しない。それまでは人間が Dashboard を見て統合する。
 2. 星や「優勢」をバックテストの勝率と誤解されないよう、UserManual に一文を必ず書く。
 3. Market Structure が未実装の間は SetupGuide も動かない（依存を明示）。
+
+---
+
+
+## 44. Engine Manager / Alert Manager（管理層）
+
+> Engine が増えると、Dashboard が個別に `Calculate()` を並べるのが破綻する。  
+> **管理層を挟み、Dashboard は「更新して描く」だけに戻す。**
+
+### 44.1 問題
+
+```
+Dashboard → CS / MF / Pivot / PriceLevel / Energy / ...（20手前）
+```
+
+この直結は、初期化順・更新順・ON/OFF・例外時の縮退を毎回 Dashboard に書くことになる。
+
+### 44.2 Engine Manager `[2.20+]`
+
+```
+Dashboard
+   ↓  UpdateAll() / GetResults()
+EngineManager
+   ↓  固定順で Calculate
+CurrencyStrength → Anomaly → Energy → BestPair → Confidence
+→ (2.20+) MoneyFlow / Regime / PriceLevel / Pivot
+→ (2.30+) MarketStructure / ...
+```
+
+| 責務 | 内容 |
+|---|---|
+| 登録 | 有効な Engine ポインタを保持 |
+| 更新順 | 仕様書の依存順を**一箇所**に固定（30.2 と同期） |
+| ON/OFF | input の Enable フラグを見てスキップ |
+| 縮退 | 1 Engine が失敗しても他を止めない |
+| 計測 | 合計計算時間（32章の性能監視） |
+
+```cpp
+class CEngineManager
+  {
+public:
+   bool  Init(...);
+   void  Register(IEngine *engine, const bool enabled);
+   bool  CalculateAll(void);     // 固定順。成功/失敗をログ
+   bool  IsAnyReady(void);
+   // getter は各 Engine への参照を返すか、Dashboard が元ポインタを持つ
+  };
+```
+
+**Ver2.11**：本体 `MarketDashboard_Ultimate.mq5` の `CalcAll()` が実質この役割。  
+Manager への切り出しは、Engine がさらに増えた Ver2.20 前後で行う。無理に今分解しない。
+
+### 44.3 Alert Manager `[2.30+]`
+
+AlertEngine（39章）は「どう鳴らすか」（エッジ・冷却・チャネル）を持つ。  
+Alert Manager は「**誰が何を要求したか**」を集約する。
+
+```
+Pivot / PriceLevel / Energy / Session / Anomaly / Strength
+        ↓  NotifyRequest(key, message, level)
+AlertManager
+        ↓  重複抑制・優先度
+AlertEngine.Raise(...)
+```
+
+| 例 key | 意味 |
+|---|---|
+| `pivot.wr1.approach` | Weekly R1 接近 |
+| `level.wh.approach` | Weekly High 接近 |
+| `energy.released` | Energy RELEASED |
+| `session.london.pre` | ロンドン開始前 |
+| `bb200.upper.approach` | 200BB上限接近 |
+
+各分析 Engine は `Alert()` や `PlaySound()` を直接呼ばない。
+
+### 44.4 Session の役割整理（既存との関係）
+
+既に存在するモジュールと「SessionEngine」提案の関係を固定する。
+
+| モジュール | 役割 | 状態 |
+|---|---|---|
+| `SessionClock` | 現地時刻・夏時間・位相（Open/Pre/…） | Ver2.11 実装済 |
+| `SessionManager` | 多市場統括の受け皿 | 予約 |
+| （別名としての SessionEngine） | **新規ファイルは作らない**。Clock/Manager に集約 | — |
+
+「開始15分前に判定を敏感に」は AdaptiveUpdate + SessionClock の既存方針で足りる。Engine を増やして重複させない。
+
+---
+
+## 45. Bollinger Engine / Cycle Engine（予約・分離方針）
+
+> 42章 Market Structure に「含めすぎない」ための分離予約。  
+> 初期は Market Structure 内のサブ計算でもよい。肥大化したらここへ切り出す。
+
+### 45.1 Bollinger Engine `[2.30+]`
+
+| 期間 | 役割 |
+|---|---|
+| 20BB | 短期ボラティリティ（拡縮）。Energy の材料にもなり得る |
+| 75 / 100BB | 中期の位置（任意） |
+| **200BB** | **大きな居場所**（Market Structure が主に参照） |
+
+```
+class CBollingerEngine : public IEngine
+  {
+   // 複数期間の Upper/Mid/Lower と「価格がどの帯か」
+   // 描画は ChartOverlay。数値のみ返す
+  };
+```
+
+表示 ON/OFF は 43.4 の Display グループに従う。
+
+### 45.2 Cycle Engine `[2.30+]`
+
+Market Structure 42.4 の位相表示を、独立エンジンに切り出す場合の受け皿。
+
+```
+サイクル検出 → 現在位相 → （参考）天井/底ゾーンの記述
+```
+
+- 特定の市販理論の再現を仕様要件にしない
+- SetupGuide は位相ラベルだけを読む
+- 日数カウントの断定表示はしない
+
+### 45.3 SetupGuide での統合表示例（目標イメージ）
+
+バラバラに出さず、構造の物語としてまとめる。
+
+```
+Market Structure
+  長期：上昇
+  中期：調整
+  短期：上昇転換
+  Weekly Pivot：上側 R1 付近
+  Weekly High：12 pips
+  200BB：上限接近
+  Energy：LOADED
+推奨の型：
+  ★★★★☆  押し目買い構造（ガイド）
+```
+
+星は材料の揃い。勝率ではない（43章）。
+
+### 45.4 実装優先度の再確認（重要）
+
+設計の予約席は増えたが、**今実装する順番は変えない。**
+
+| 順 | 内容 | 版 |
+|---|---|---|
+| 1 | CurrencyStrength / BestPair / Confidence / Dashboard | **2.11 必須** |
+| 2 | AssetDetection の安定 | 2.11 |
+| 3 | MoneyFlow / Regime | 2.20 |
+| 4 | PriceLevel / Pivot（Weekly 中心） | 2.20 |
+| 5 | EngineManager への CalcAll 移行 | 2.20〜 |
+| 6 | MarketStructure / Bollinger / Cycle | 2.30+ |
+| 7 | AlertManager 本格化 | 2.30 |
+| 8 | SetupGuide | 3.00 |
+
+仕様を増やすことと、コードを書くことを混同しない（0.3）。
 
 ---
 
