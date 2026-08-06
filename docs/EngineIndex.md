@@ -15,6 +15,8 @@
 | Market Regime | `Engines/MarketRegime.mqh` | 2.20 枠 | `Test_MarketRegime.mq5` |
 | Market State | `Engines/MarketState.mqh` | 2.30 枠 | `Test_MarketState.mq5` |
 | Alert | `Engines/AlertEngine.mqh` | 2.30 枠 | `Test_AlertEngine.mq5` |
+| Market Structure | `Engines/MarketStructure.mqh` | 2.30+ 枠 | `Test_MarketStructure.mq5` |
+| Setup Guide | `Engines/SetupGuide.mqh` | 3.00 予約 | `Test_SetupGuide.mq5` |
 | Pivot | `Engines/PivotEngine.mqh` | 2.20+ 枠 | `Test_PivotEngine.mq5` |
 | Price Level | `Engines/PriceLevelEngine.mqh` | 2.20+ 枠 | `Test_PriceLevelEngine.mq5` |
 | Correlation | `Engines/CorrelationEngine.mqh` | 3.00 予約 | `Test_CorrelationEngine.mq5` |

@@ -1,5 +1,26 @@
 # Changelog
 
+## Market Structure & Today's Setup (2026-08-06)
+
+### Spec (v1.9 Draft)
+
+- **第42章 Market Structure Engine [2.30+]**
+  - 200BB = 大きな居場所（20BBのボラと役割分離）
+  - 大波 / 中波 / 小波の階層と構造ラベル
+  - サイクルは日数より**位相表示**
+  - シグナルではなく構造の記述
+- **第43章 Today's Setup [3.00]**
+  - 複数エンジン統合ガイド（売買強制ではない）
+  - 星は材料の揃いであり勝率ではない
+  - Display / Alerts の個別 ON/OFF 方針
+
+### Code / Tests
+
+- `MarketStructure.mqh` / `SetupGuide.mqh` 骨格
+- `Test_MarketStructure.mq5` / `Test_SetupGuide.mq5`
+
+---
+
 ## Pivot Engine Spec (2026-08-06)
 
 ### Spec

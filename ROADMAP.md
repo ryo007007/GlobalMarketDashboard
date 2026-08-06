@@ -43,6 +43,7 @@
 
 | モジュール | 内容 |
 |------------|------|
+| **Market Structure** | 大波/中波/小波・200BB位置・サイクル位相 |
 | Market State | Quiet / Building / Expansion / Trending の4状態 |
 | Alert Engine | 遷移検出・ヒステリシス・冷却付き通知 |
 | Price Level ↔ Alert | 接近エッジ通知・Breakout/Breakdown Watch 表示 |
@@ -56,6 +57,7 @@
 
 | モジュール | 内容 |
 |------------|------|
+| **Today's Setup (SetupGuide)** | 複数エンジン統合ガイド（シグナルではない） |
 | **Correlation Engine** | 主要アセット間の相関係数 |
 | **Statistics Engine** | 勝率・ATR・曜日/月別統計 |
 | Flow Analysis | Money Rotation（資金循環） |

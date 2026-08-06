@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.8 Draft** |
+| Document Version | Project Specification **v1.9 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -49,6 +49,7 @@
 36. Adaptive Update Engine　37. Energy Engine
 38. Market State Engine [2.30]　39. Alert Engine [2.30]
 40. Price Level Engine [2.20+]　41. Pivot Engine [2.20+]
+42. Market Structure Engine [2.30+]　43. Today's Setup [3.00]
 
 **付録**
 A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
@@ -264,6 +265,8 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 | Alert Engine `[2.30]` | 条件が成立した瞬間に1回だけ知らせる |
 | Price Level Engine `[2.20+]` | 重要価格帯（日/週/月の高安）と現在価格の距離を数値化し、接近・ブレイク監視する |
 | Pivot Engine `[2.20+]` | Daily/Weekly/Monthly/Yearly の Pivot（PP・R1〜R3・S1〜S3）を計算し距離と接近を出す。**Weekly を優先表示** |
+| Market Structure Engine `[2.30+]` | 大波・中波・小波の階層、200BBによる「大きな居場所」、サイクル位相を一つの構造として扱う |
+| Today's Setup `[3.00]` | 複数エンジンを統合し「今日噛み合いやすい戦略の型」をガイド表示する（売買強制シグナルではない） |
 
 Energy と Adaptive Update は厳密には分析エンジンではない。Energy は方向を出さず、Adaptive Update は市場を判定しない。だが `IEngine` の呼び出し規約に揃えておくほうが本体が単純になるため、同じ場所に置いている。
 
@@ -3949,6 +3952,251 @@ public:
 - Woodie / Camarilla / Fibonacci Pivot の切替
 - 複数銘柄の Weekly Pivot 一覧（指数・Gold）
 - チャートへの水平線描画（ChartOverlay）
+
+---
+
+
+## 42. Market Structure Engine [2.30+]（相場構造）
+
+> **実装フェーズ**：設計予約。Ver2.11 / 2.20 の成功基準には含めない。  
+> 本エンジンは「インジケーターを全部載せる」ためではなく、**相場を階層的に理解する軸**を一つにまとめるために置く。
+
+### 42.1 Purpose
+
+長期・中期・短期の構造を同じ枠組みで読み、次の材料を一箇所に集約する。
+
+| 材料 | このエンジンでの役割 |
+|---|---|
+| 200期間ボリンジャーバンド | 相場の**大きな居場所**（20BBのボラとは役割を分ける） |
+| 大波・中波・小波 | 時間軸を役割で定義したトレンド階層 |
+| サイクル位相 | 日数カウントより、**フェーズ表示**を優先 |
+| （参照）Pivot / Price Level | 節目。構造判定の材料として読むが、計算は各 Engine に残す |
+
+出力は「買い/売りを命令するシグナル」ではなく、**構造の記述**である。
+
+### 42.2 200期間ボリンジャーバンド（大きな居場所）
+
+```
+20BB  = ボラティリティ（短期の拡縮）
+200BB = 相場の大きな居場所（長期の位置）
+```
+
+| 位置 | 解釈（記述レベル） |
+|---|---|
+| Upper200 付近 | 長期的には買われ過ぎ寄りの位置 |
+| Center200 付近 | 長期レンジの中核付近 |
+| Lower200 付近 | 長期的には売られ過ぎ寄りの位置 |
+
+- 計算足は入力で変更可（既定: 日足またはチャート足）。期間 200 は変更可
+- Energy Engine の「圧縮」とは別物。200BB は**位置**、Energy は**圧縮の蓄積**
+- チャート描画が必要なら `ChartOverlay` に委譲し、本 Engine は数値と状態だけ返す
+
+### 42.3 大波・中波・小波（時間軸の役割定義）
+
+時間足の固定例（入力で変更可）:
+
+| 波 | 既定の時間足 | 役割 |
+|---|---|---|
+| 大波 (Macro) | Daily | 長期の向き |
+| 中波 (Intermediate) | H4 | 調整か順行か |
+| 小波 (Micro) | M15 | エントリーのタイミング帯 |
+
+各波について、単純な向きを返す（実装は MA 傾き、スイング高安、または短い Strength 的集計など。Ver2.30 で一本化する）。
+
+```
+ENUM_WAVE_DIR { WAVE_UP, WAVE_DOWN, WAVE_FLAT, WAVE_TURN_UP, WAVE_TURN_DOWN }
+```
+
+**組み合わせの記述例（ガイドでありシグナルではない）**
+
+| 大波 | 中波 | 小波 | 構造ラベル（例） |
+|---|---|---|---|
+| ↑ | ↓ | ↑ / 転換↑ | 押し目買い候補の構造 |
+| ↓ | ↑ | ↓ / 転換↓ | 戻り売り候補の構造 |
+| ↑ | ↑ | ↑ | 順行の加速帯 |
+| ↓ | ↓ | ↓ | 順行の加速帯（下） |
+| 混在・FLAT 多い | | | 構造不明 / 様子見 |
+
+ラベルは Dashboard に短く出す。★の数や「買え」とは書かない。
+
+### 42.4 サイクル位相（フェーズ表示）
+
+日数を数えて当てるより、**位相を段階表示**する。
+
+| 位相（例） | 表示イメージ |
+|---|---|
+| 初動 | `■■■■□` |
+| 上昇/下降 加速 | `■■■■■` |
+| 成熟 | `■■□□□` |
+| 反転注意 | `■□□□□` |
+| 不明 | `--` |
+
+- 杉田勝氏のサイクル理論を**参考思想**としつつ、本仕様は特定書籍の再現を要求しない
+- 位相の入力は「大波の経過・200BB位置・Energy/Pivot との関係」など複合でよい
+- 断定表現（「必ず反転する」）は禁止
+
+### 42.5 Output
+
+| 項目 | 説明 |
+|---|---|
+| Bb200Upper / Mid / Lower | 価格 |
+| Bb200Position | ABOVE_UPPER / UPPER_ZONE / MID / LOWER_ZONE / BELOW_LOWER |
+| Macro / Intermediate / Micro | 各波の方向 |
+| StructureLabel | 押し目候補 / 戻り候補 / 順行 / 不明 など |
+| CyclePhase | 初動〜反転注意 |
+| IsReady | データ充足 |
+
+### 42.6 Display
+
+```
+Market Structure
+  Macro   ↑  Daily
+  Inter   ↓  H4
+  Micro   ↑  M15
+  Label   Pullback-buy structure
+  BB200   Upper zone
+  Cycle   成熟  ■■□□□
+```
+
+個別表示の ON/OFF は 43.4 / 設定章に従う。
+
+### 42.7 Class Interface
+
+```cpp
+class CMarketStructure : public IEngine
+  {
+public:
+   bool   Init(CLogger *logger, const string symbol,
+               const ENUM_TIMEFRAMES macroTf,
+               const ENUM_TIMEFRAMES interTf,
+               const ENUM_TIMEFRAMES microTf,
+               const int bbPeriod = 200);
+   bool   Calculate(void);
+   bool   IsReady(void);
+   string GetName(void);  // "MarketStructure"
+
+   ENUM_WAVE_DIR GetMacro(void);
+   ENUM_WAVE_DIR GetIntermediate(void);
+   ENUM_WAVE_DIR GetMicro(void);
+   string GetStructureLabel(void);
+   string GetCyclePhaseText(void);
+   string GetBb200PositionText(void);
+   string GetDisplayText(void);
+  };
+```
+
+### 42.8 Implementation Notes
+
+1. Ver2.30 より前に本実装しない。枠と仕様のみ。
+2. Pivot / PriceLevel / Energy を**内部で再計算しない**。必要な値は getter 経由で読むか、構造ラベルは Display 側で合成してもよい。
+3. チャートへの 200BB 描画は Overlay。Engine は数値。
+4. 「サイクル理論の完全実装」を目標にしない。位相の粗い表示で十分。
+
+### 42.9 Future Expansion
+
+- 波の自動時間足選択（銘柄のボラに応じて）
+- 複数銘柄の構造一覧
+- Market State（38章）への正式な入力としての接続
+
+---
+
+## 43. Today's Setup [3.00]（総合ガイド）
+
+> **実装フェーズ**：Ver3.00 予約。売買を強制するシグナルエンジンではない。
+
+### 43.1 Purpose
+
+複数エンジンの出力を読み、「**今の環境ではどの戦略の型が噛み合いやすいか**」を一行〜数行でガイドする。
+
+```
+★★★★☆  Today's Setup
+Trend Pullback Buy structure
+```
+
+これはエントリー指示ではなく、**注意の向け先**である。
+
+### 43.2 入力（読む側）
+
+| エンジン | 使う情報の例 |
+|---|---|
+| Market Structure | 大波/中波/小波、StructureLabel、BB200位置、Cycle |
+| Currency Strength | 最強/最弱、点差 |
+| Money Flow / Regime | Risk ON/OFF（実装後） |
+| Energy | LOADED / RELEASED（水準の誤解を避ける） |
+| Pivot / Price Level | 目前の節目 |
+| Anomaly | 暦の文脈（加算は任意・既定OFF） |
+| Session | どの市場が開いているか |
+
+### 43.3 出力ルール（設計原則）
+
+1. **強制シグナルにしない**。「優勢」「候補」「様子見」まで
+2. **星は一致度・材料の揃い**であり勝率ではない
+3. 材料不足のときは `Setup unavailable` または `様子見`。無理に星を付けない
+4. Confidence（8章）と役割を分ける  
+   - Confidence = 個別スコアの確からしさ  
+   - Today's Setup = 戦略の型のガイド
+
+### 43.4 表示・アラートの個別 ON/OFF（必須方針）
+
+機能が増えるほど、**全部出すと読めなくなる**。入力はグループ化する。
+
+**Display（例）**
+
+```
+Show Dashboard
+Show Currency Strength
+Show Best Pair
+Show Confidence
+Show Money Flow
+Show Energy
+Show Anomaly
+Show Session
+Show Price Levels
+Show Pivot
+Show Market Structure
+Show Cycle Phase
+Show Today's Setup
+Show Bollinger20 overlay
+Show Bollinger200 overlay
+Show Moving Average overlay
+```
+
+**Alerts（例）** — 実体は AlertEngine の key 単位
+
+```
+Alert Pivot approach
+Alert Weekly High / Low
+Alert Bollinger200
+Alert Breakout / Breakdown Watch
+Alert Energy RELEASED
+Alert Session Open
+Alert Economic Events
+```
+
+既定は「表示は多め・音/ポップアップは控えめ」。Alert の鳴らし方は 39章のチャネル方針に従う。
+
+### 43.5 Class Interface（案）
+
+```cpp
+class CSetupGuide : public IEngine
+  {
+public:
+   bool   Init(CLogger *logger);
+   // 各 Engine ポインタを SetXxx で受け取る
+   bool   Calculate(void);
+   bool   IsReady(void);
+   string GetName(void);          // "SetupGuide"
+   string GetSetupTitle(void);    // "Trend Pullback Buy structure"
+   int    GetStars(void);         // 0..5 材料の揃い。勝率ではない
+   string GetDisplayText(void);
+  };
+```
+
+### 43.6 Implementation Notes
+
+1. Ver3.00 まで本実装しない。それまでは人間が Dashboard を見て統合する。
+2. 星や「優勢」をバックテストの勝率と誤解されないよう、UserManual に一文を必ず書く。
+3. Market Structure が未実装の間は SetupGuide も動かない（依存を明示）。
 
 ---
 

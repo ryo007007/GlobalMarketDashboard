@@ -37,6 +37,8 @@ Engines
    ├─ AlertEngine      : [2.30]
    ├─ PriceLevelEngine : [2.20+] 重要価格帯
    ├─ PivotEngine      : [2.20+] ピボット（Weekly 優先）
+   ├─ MarketStructure  : [2.30+] 大波/中波/小波・200BB・サイクル
+   ├─ SetupGuide       : [3.00]  Today's Setup（ガイド）
    ├─ CorrelationEngine: [3.00] 予約
    └─ StatisticsEngine : [3.00] 予約
    │
