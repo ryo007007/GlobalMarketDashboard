@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.5** |
+| Document Version | Project Specification **v1.6 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -1550,8 +1550,9 @@ GMDの目的は一瞬で資金の流れを判断することである。多段�
 | Project Specification **v1.3** | **Currency Strength Engine v2 へ全面改訂**（5章）。対象を **8通貨・28ペア**（NZD追加）に確定し、「7通貨・28ペア」の誤りを訂正。判定を直近1本の陰陽線から **直近N本の重み付き集計**（既定3本・重み1:2:3）に変更。勢い（-7〜+7）と**7段階の矢印**を新設。**15章の配色を赤・白・青の3色に簡素化**し、6段階グラデーションを廃止。8.3.1に **Ver2.11用のConfidence暫定式** を追加。9.3のBest Pair解決フローを `GetFxSymbol()` ベースに書き換え、反転時は方向をSELLに変換する規則を明記 |
 
 | Project Specification **v1.4** | **10章に Anomaly Engine を新設**（規則表方式、scope による資産分離、五十日の東京時間判定、月別 Market Season Score、合計の打ち止め ±15、星による選別）。旧10章「アセット検出 概要」を **26.16へ移設**し、Part II を6エンジン構成に整理。**8.9** を新設し、アノマリーを Confidence の数値に既定で加算しない理由を明記。エラーコードに `AN`（701-799）を追加。4章の図と27.0のスモークテストにアノマリーを反映。34章に L12〜L14 を追加 |
-| Project Specification **v1.5** | **Part VII（36〜39章）を新設**。**36. Adaptive Update Engine** — 更新間隔を3段（Idle 2000 / Normal 1000 / Alert 300ms）で可変化。セッションを**現地時刻**で定義し、欧州・米国・豪州の夏時間を**独立に**計算（年3週間の欧米ずれに対応）。ニューヨークのセッション開始を指標発表に合わせ **08:30 ET** と定義。速くする方向のみ滞留時間を免除する非対称ヒステリシスを規定。**37. Energy Engine** — 圧縮の蓄積を3軸（圧縮50/無方向30/参加20）の**パーセンタイル順位**で数値化。ATRとBB幅は加算せず min を取る。0〜100を「%」と呼ばないことを明記。状態機械 NORMAL→BUILDING→LOADED→**RELEASED** を定め、赤はRELEASEDのみ。材料不足は `ENERGY_UNAVAILABLE` で 0 を返さない。**38. Market State Engine [2.30]** — 状態を観測可能な4つ（Quiet / Building / Expansion / Trending）に限定し、Exhaustion / Reversal は事後ラベルとしてVer3.00で検討。**39. Alert Engine [2.30]** — 水準ではなく遷移で発火。エッジ検出・ヒステリシス・冷却をEngine内部に集約。既定チャネルはパネル+Printのみ。エラーコードに `EN`(801-899) / `SC`(851) / `AU`(861) / `MS`(871-872) / `AL`(881-882) を追加。18章のツリー、21.3〜21.5、27.0のS8〜S10、34章のL16〜L19 を追加 |
 | Project Specification **v1.4a** | **10.13「リスク志向バイアス」を新設**。株の季節性からリスク志向を導く関係を認めつつ、FXスコアには加算せず独立した文脈値（`GetRiskBiasScore()`、±5、株スコアの1/2）として実装する根拠を明記。ダッシュボードに `Season` 行を追加。Market Regime[2.20] が季節性を消費する際の重み上限（Risk Score全体の10%以内）を規定。27.0に S7、34章に L15 を追加 |
+| Project Specification **v1.5** | **Part VII（36〜39章）を新設**。**36. Adaptive Update Engine** — 更新間隔を3段（Idle 2000 / Normal 1000 / Alert 300ms）で可変化。セッションを**現地時刻**で定義し、欧州・米国・豪州の夏時間を**独立に**計算（年3週間の欧米ずれに対応）。ニューヨークのセッション開始を指標発表に合わせ **08:30 ET** と定義。速くする方向のみ滞留時間を免除する非対称ヒステリシスを規定。**37. Energy Engine** — 圧縮の蓄積を3軸（圧縮50/無方向30/参加20）の**パーセンタイル順位**で数値化。ATRとBB幅は加算せず min を取る。0〜100を「%」と呼ばないことを明記。状態機械 NORMAL→BUILDING→LOADED→**RELEASED** を定め、赤はRELEASEDのみ。材料不足は `ENERGY_UNAVAILABLE` で 0 を返さない。**38. Market State Engine [2.30]** — 状態を観測可能な4つ（Quiet / Building / Expansion / Trending）に限定し、Exhaustion / Reversal は事後ラベルとしてVer3.00で検討。**39. Alert Engine [2.30]** — 水準ではなく遷移で発火。エッジ検出・ヒステリシス・冷却をEngine内部に集約。既定チャネルはパネル+Printのみ。エラーコードに `EN`(801-899) / `SC`(851) / `AU`(861) / `MS`(871-872) / `AL`(881-882) を追加。18章のツリー、21.3〜21.5、27.0のS8〜S10、34章のL16〜L19 を追加 |
+| Project Specification **v1.6 Draft** | **構造整理フェーズ**。`Interfaces/` を新設し、`IEngine` を `Core/Types.mqh` から分離。`Core/Constants.mqh` を追加してマジックナンバーを集約。`Core/Config.mqh` を追加し、入力パラメータを将来的に構造体へ寄せる受け皿を用意。`Core/SymbolCache.mqh` を追加して AssetDetection の L2 キャッシュ境界を明示。`Core/SessionManager.mqh` を追加し、`SessionClock` から将来のセッション統括へ拡張する余地を確保。`README.md` / `Architecture.md` / 18章 / 29.4 / 30章 / 35.1 / 35.4 を現行構成に同期し、ファイル名と実装範囲の不一致を是正 |
 
 ---
 
@@ -1562,6 +1563,11 @@ GMDの目的は一瞬で資金の流れを判断することである。多段�
 ```text
 src/
 └── Modules/
+    ├── Interfaces/               // 契約だけを置く。実装を混ぜない
+    │   ├── IEngine.mqh           // 全分析エンジンの共通契約
+    │   ├── IDashboard.mqh        // UIコンテナの共通契約
+    │   └── IIndicator.mqh        // 将来の補助インジケーター用
+    │
     ├── Engines/                  // 分析・計算ロジック
     │   ├── CurrencyStrength.mqh  // 28通貨ペアの強弱スコア計算
     │   ├── MoneyFlow.mqh         // アセット間の資金流出入分析
@@ -1581,11 +1587,15 @@ src/
     │                             //   3分割せず「描画の下請け」と「レイアウト」で切る
     │
     └── Core/                     // システム共通基盤・ユーティリティ
-        ├── Types.mqh              // 全モジュール共通の列挙型・構造体・IEngine（付録B）
-        ├── AssetDetection.mqh     // ブローカー固有銘柄の自動検出（優先順位リスト方式）
-        ├── SessionClock.mqh       // 現地時刻でのセッション判定と夏時間（36.7-36.8）
-        ├── Logger.mqh             // 動作ログ・エラーハンドリング・デバッグ出力
-        └── Utils.mqh              // 配列操作・型変換・時刻計算等の汎用補助関数
+        ├── Constants.mqh         // マジックナンバー・共通定数
+        ├── Config.mqh            // 将来の設定集約先（受け皿）
+        ├── Types.mqh             // 全モジュール共通の列挙型・構造体（付録B）
+        ├── AssetDetection.mqh    // ブローカー固有銘柄の自動検出（優先順位リスト方式）
+        ├── SymbolCache.mqh       // [2.20] L2キャッシュ境界
+        ├── SessionClock.mqh      // 現地時刻でのセッション判定と夏時間（36.7-36.8）
+        ├── SessionManager.mqh    // [2.20+] セッション統括の受け皿
+        ├── Logger.mqh            // 動作ログ・エラーハンドリング・デバッグ出力
+        └── Utils.mqh             // 配列操作・型変換・時刻計算等の汎用補助関数
 ```
 
 ### 18.1 モジュール間インターフェースの原則（27章と統合）
@@ -2566,7 +2576,15 @@ for(int i=0; i<5; i++)
 
 | ファイル | クラス | 依存先 |
 |---|---|---|
+| `Interfaces/IEngine.mqh` | `IEngine` | なし |
+| `Interfaces/IDashboard.mqh` | `IDashboard` | なし |
+| `Interfaces/IIndicator.mqh` | `IIndicator` | なし |
+| `Core/Constants.mqh` | （定数群） | なし |
+| `Core/Config.mqh` | `SGmdConfig` ほか | Types |
 | `Core/AssetDetection.mqh` | `CAssetDetection` | Logger のみ |
+| `Core/SymbolCache.mqh` | `CSymbolCache` | Types, Logger |
+| `Core/SessionClock.mqh` | `CSessionClock` | Types, Logger |
+| `Core/SessionManager.mqh` | `CSessionManager` | SessionClock, Logger |
 | `Core/Logger.mqh` | `CLogger` | なし |
 | `Core/Utils.mqh` | （関数群） | なし |
 | `Engines/CurrencyStrength.mqh` | `CCurrencyStrength` | AssetDetection |
@@ -2574,10 +2592,8 @@ for(int i=0; i<5; i++)
 | `Engines/MarketRegime.mqh` | `CMarketRegime` | AssetDetection |
 | `Engines/BestPair.mqh` | `CBestPair` | AssetDetection, CurrencyStrength |
 | `Engines/Confidence.mqh` | `CConfidence` | CurrencyStrength, MoneyFlow, MarketRegime |
-| `Display/Dashboard.mqh` | `CDashboard` | 全Engine |
-| `Display/SummaryPanel.mqh` | `CSummaryPanel` | Dashboard経由 |
-| `Display/RankingPanel.mqh` | `CRankingPanel` | Dashboard経由 |
-| `Display/MoneyFlowPanel.mqh` | `CMoneyFlowPanel` | Dashboard経由 |
+| `Display/Dashboard.mqh` | `CDashboard` | 複数Engine |
+| `Display/DrawObjects.mqh` | （描画関数群） | なし |
 
 ---
 
@@ -2589,34 +2605,39 @@ for(int i=0; i<5; i++)
 OnInit()
   │
   ├─▶ CLogger::Init()
-  ├─▶ CAssetDetection::Init() → LoadCache() → DetectAll() → SaveCache()
-  │        └─ 結果：SAssetRegistry（確定した銘柄名の一覧）
-  ├─▶ 各Engine::Init(&g_assets)      ← レジストリの参照を渡すだけ
-  ├─▶ CDashboard::Init()             ← パネル枠のみ作成、値は空
-  ├─▶ CLogger::PrintSummary()
-  └─▶ EventSetTimer(1)
+  ├─▶ CAssetDetection::Init()
+  │        └─ 結果：SAssetRegistry（Ver2.11は L1 メモリ保持のみ）
+  ├─▶ CCurrencyStrength / CBestPair / CConfidence / CAnomalyEngine / CEnergyEngine の Init()
+  ├─▶ CSessionClock / CAdaptiveUpdate の Init()
+  ├─▶ CDashboard::Init() → Build()
+  ├─▶ CalcAll()                      ← 起動直後に空パネルを見せない
+  └─▶ EventSetMillisecondTimer(...)
 ```
 
 ### 30.2 定常稼働時（OnTimer / OnCalculate）
 
 ```text
-OnTimer()（1秒毎）
+OnTimer()（可変。通常1000ms / 静穏2000ms / 警戒300ms）
   │
-  ├─▶ CAssetDetection::RetryPending()    ← PENDING銘柄のみ
-  │
-  ├─▶ 更新間隔チェック（19章）
-  │     通貨強弱 1秒 / 指数・Gold 5秒 / 債券 10秒 / イベント 60秒
+  ├─▶ 更新条件チェック
+  │     新バー限定なら DetectNewBar()
+  │     それ以外は経過ミリ秒で判定
   │
   ├─▶【計算フェーズ】※この順序は固定
   │     1. CCurrencyStrength::Calculate()
-  │     2. CMoneyFlow::Calculate()
-  │     3. CMarketRegime::Calculate()
+  │     2. CAnomalyEngine::Calculate()
+  │     3. CEnergyEngine::Calculate()
   │     4. CBestPair::Calculate()        ← 1の結果を使う
-  │     5. CConfidence::Calculate()      ← 1〜3の結果を使う
+  │     5. CConfidence::Calculate()      ← 1 + 2 を参照
+  │     6. [予約] MoneyFlow / MarketRegime / MarketState
   │
-  └─▶【描画フェーズ】
-        CDashboard::Update()
-          ├─ CSummaryPanel::Draw()      Regime / Confidence / BestPair
+  ├─▶【描画フェーズ】
+  │     CDashboard::Update()
+  │
+  └─▶【制御フェーズ】
+        CSessionClock::Refresh()
+        CAdaptiveUpdate::Evaluate()
+        変化時だけ EventSetMillisecondTimer() を張り直す
           ├─ CRankingPanel::Draw()      通貨強弱
           ├─ CMoneyFlowPanel::Draw()    アセット別フロー
           ├─ MarketOpen 描画
@@ -2871,18 +2892,26 @@ g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
 
 ```text
 GlobalMarketDashboard/
-├── README.md                 // プロジェクトの顔。概要・スクリーンショット・導入手順
+├── README.md                 // プロジェクトの顔。概要・導入手順・現状
 ├── CHANGELOG.md              // バージョンごとの変更履歴
 ├── ROADMAP.md                // 25章の抜粋。進捗チェックボックス付き
 ├── LICENSE
 ├── docs/
-│   ├── SPECIFICATION.md      // 本書
-│   ├── USER_MANUAL.md        // 利用者向け。設定項目と画面の見方
-│   ├── DEVELOPER_GUIDE.md    // 開発者向け。ビルド手順とモジュール解説
-│   └── images/               // スクリーンショット・図
+│   ├── ProjectSpecification.md // 本書（正本）
+│   ├── Architecture.md        // 実装ベースの構造要約
+│   ├── CodingRules.md
+│   ├── DevelopmentPolicy.md
+│   ├── GeneralFlow.md
+│   ├── GitRule.md
+│   ├── MeetingNotes.md
+│   ├── TradingGuide.md
+│   ├── UserManual.md
+│   ├── VersionRule.md
+│   └── images/
 ├── src/
-│   ├── GlobalMarketDashboard.mq5
+│   ├── MarketDashboard_Ultimate.mq5
 │   └── Modules/
+│       ├── Interfaces/
 │       ├── Core/
 │       ├── Engines/
 │       └── Display/
@@ -2923,12 +2952,16 @@ Ver <メジャー>.<マイナー><パッチ>
 ```text
 v1.0 Draft  設計を一通り書き切った状態
     ↓  実装者レビューを反映（スコープ調整）
-v1.1        ← 現在地
-    ↓  Ver2.11 実装で判明した現実を反映
-v1.2        テスト計画の確定・エラーコードの実績反映
-    ↓  Ver2.11 リリース
-v1.3        Known Limitations の更新
-    ↓  Ver2.20（Money Flow / Market Regime / Cache）
+v1.1
+    ↓  実装現実とのズレを修正
+v1.2
+    ↓  Currency Strength v2 / UI整理
+v1.3
+    ↓  Anomaly / Adaptive / Energy を仕様へ反映
+v1.4〜v1.5
+    ↓  構造整理（Interfaces / Constants / Config / Cache境界）
+v1.6 Draft  ← 現在地
+    ↓  Ver2.11 実装の固定化
 v2.0        アーキテクチャ変更を伴う改訂
 ```
 
