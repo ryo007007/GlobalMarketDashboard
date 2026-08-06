@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.4** |
+| Document Version | Project Specification **v1.5** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -44,6 +44,10 @@
 29. Class Diagram　30. Data Flow　31. Error Handling
 32. Performance Benchmark　33. Release Checklist
 34. Known Limitations　35. ドキュメント体系とリポジトリ構成
+
+**Part VII — 制御・状態・通知（Ver2.11〜2.30）**
+36. Adaptive Update Engine　37. Energy Engine
+38. Market State Engine [2.30]　39. Alert Engine [2.30]
 
 **付録**
 A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
@@ -165,7 +169,12 @@ GMDは、価格そのものではなく「今、資金がどこからどこへ�
 │                    ┌──────────┐             │                │
 │                    │ Logger   │◀────────────┤ 全モジュールが  │
 │                    └──────────┘             │ 使用           │
-└────────────────────────────────────────────┼────────────────┘
+│  ┌────────────────────────────────────┐     │                │
+│  │ SessionClock                       │     │                │
+│  │ 現地時刻でセッション判定            │     │                │
+│  │ 夏時間は EU / US / AU を別々に計算  │     │                │
+│  └────────────────┬───────────────────┘     │                │
+└───────────────────┼─────────────────────────┼────────────────┘
                                               │ SAssetRegistry
                                               │（使える銘柄名の一覧）
                             ┌─────────────────┴─────────────────┐
@@ -187,6 +196,17 @@ GMDは、価格そのものではなく「今、資金がどこからどこへ�
 │   │  AnomalyEngine   │    ゆえに他のどれにも依存しない        │
 │   │  暦の文脈を点数化 │                                       │
 │   └────────┬─────────┘                                       │
+│                                                               │
+│   ┌──────────────────┐  ← 今見ているチャート1本のみ          │
+│   │  EnergyEngine    │    方向は言わない。圧縮の度合いだけ    │
+│   │  圧縮の蓄積を点数化│                                      │
+│   └────────┬─────────┘                                       │
+│            │ ENERGY_LOADED / RELEASED                         │
+│            ▼                                                  │
+│   ┌──────────────────┐                                       │
+│   │ AdaptiveUpdate   │───▶ 本体が EventSetMillisecondTimer   │
+│   │  更新間隔の段     │     を張り直す（自分では触らない）    │
+│   └──────────────────┘                                       │
 │            │                      │                          │
 │            └──────────┬───────────┘                          │
 │                       ▼                                       │
@@ -237,6 +257,12 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 | Confidence Engine | 各エンジンの一致度から、シグナル全体の信頼度を算出 |
 | Best Pair Engine | 通貨強弱から、最も分かりやすいトレンドが出やすい通貨ペアを提案 |
 | Anomaly Engine | 五十日・季節性など暦から決まる統計的な偏りを点数化（価格を読まない） |
+| Energy Engine | 値幅の圧縮・方向の消失・参加の減少を1つの尺度に畳む（**方向は予測しない**） |
+| Adaptive Update Engine | 市場時間と圧縮から更新間隔の段を決める（分析ではなく制御） |
+| Market State Engine `[2.30]` | 上記を1つの「現在の市場状態」に畳む |
+| Alert Engine `[2.30]` | 条件が成立した瞬間に1回だけ知らせる |
+
+Energy と Adaptive Update は厳密には分析エンジンではない。Energy は方向を出さず、Adaptive Update は市場を判定しない。だが `IEngine` の呼び出し規約に揃えておくほうが本体が単純になるため、同じ場所に置いている。
 
 これらの結果を `Display/Dashboard.mqh` が受け取り、選択された表示モード（12章）に応じて画面に描画する。
 
@@ -248,8 +274,12 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 MT5 → AssetDetection → CurrencyStrength → BestPair ─┐
                                                      ├→ Confidence → Dashboard → Chart
         （暦のみ）    →   AnomalyEngine  ────────────┘
+        （1銘柄）     →   EnergyEngine   ────────────┘
+                                    │
+        SessionClock ───────────────┴──▶ AdaptiveUpdate ──▶ タイマー間隔
                                                           ▲
-                                       MoneyFlow / MarketRegime は Ver2.20
+              MoneyFlow / MarketRegime は Ver2.20
+              MarketState / AlertEngine は Ver2.30
 ```
 
 Confidence はVer2.11では入力が2つ（強弱の明確さ・データ充足率）に減るため、暫定の重み配分で動かす（8.3参照）。
@@ -1520,6 +1550,7 @@ GMDの目的は一瞬で資金の流れを判断することである。多段�
 | Project Specification **v1.3** | **Currency Strength Engine v2 へ全面改訂**（5章）。対象を **8通貨・28ペア**（NZD追加）に確定し、「7通貨・28ペア」の誤りを訂正。判定を直近1本の陰陽線から **直近N本の重み付き集計**（既定3本・重み1:2:3）に変更。勢い（-7〜+7）と**7段階の矢印**を新設。**15章の配色を赤・白・青の3色に簡素化**し、6段階グラデーションを廃止。8.3.1に **Ver2.11用のConfidence暫定式** を追加。9.3のBest Pair解決フローを `GetFxSymbol()` ベースに書き換え、反転時は方向をSELLに変換する規則を明記 |
 
 | Project Specification **v1.4** | **10章に Anomaly Engine を新設**（規則表方式、scope による資産分離、五十日の東京時間判定、月別 Market Season Score、合計の打ち止め ±15、星による選別）。旧10章「アセット検出 概要」を **26.16へ移設**し、Part II を6エンジン構成に整理。**8.9** を新設し、アノマリーを Confidence の数値に既定で加算しない理由を明記。エラーコードに `AN`（701-799）を追加。4章の図と27.0のスモークテストにアノマリーを反映。34章に L12〜L14 を追加 |
+| Project Specification **v1.5** | **Part VII（36〜39章）を新設**。**36. Adaptive Update Engine** — 更新間隔を3段（Idle 2000 / Normal 1000 / Alert 300ms）で可変化。セッションを**現地時刻**で定義し、欧州・米国・豪州の夏時間を**独立に**計算（年3週間の欧米ずれに対応）。ニューヨークのセッション開始を指標発表に合わせ **08:30 ET** と定義。速くする方向のみ滞留時間を免除する非対称ヒステリシスを規定。**37. Energy Engine** — 圧縮の蓄積を3軸（圧縮50/無方向30/参加20）の**パーセンタイル順位**で数値化。ATRとBB幅は加算せず min を取る。0〜100を「%」と呼ばないことを明記。状態機械 NORMAL→BUILDING→LOADED→**RELEASED** を定め、赤はRELEASEDのみ。材料不足は `ENERGY_UNAVAILABLE` で 0 を返さない。**38. Market State Engine [2.30]** — 状態を観測可能な4つ（Quiet / Building / Expansion / Trending）に限定し、Exhaustion / Reversal は事後ラベルとしてVer3.00で検討。**39. Alert Engine [2.30]** — 水準ではなく遷移で発火。エッジ検出・ヒステリシス・冷却をEngine内部に集約。既定チャネルはパネル+Printのみ。エラーコードに `EN`(801-899) / `SC`(851) / `AU`(861) / `MS`(871-872) / `AL`(881-882) を追加。18章のツリー、21.3〜21.5、27.0のS8〜S10、34章のL16〜L19 を追加 |
 | Project Specification **v1.4a** | **10.13「リスク志向バイアス」を新設**。株の季節性からリスク志向を導く関係を認めつつ、FXスコアには加算せず独立した文脈値（`GetRiskBiasScore()`、±5、株スコアの1/2）として実装する根拠を明記。ダッシュボードに `Season` 行を追加。Market Regime[2.20] が季節性を消費する際の重み上限（Risk Score全体の10%以内）を規定。27.0に S7、34章に L15 を追加 |
 
 ---
@@ -1537,7 +1568,11 @@ src/
     │   ├── MarketRegime.mqh      // Risk Score (0-100) および Risk ON/OFF判定
     │   ├── Confidence.mqh        // 総合確信度 (0-100%) 計算
     │   ├── BestPair.mqh          // 最強vs最弱の「ベストペア」自動選定
-    │   └── AnomalyEngine.mqh     // 暦の文脈を点数化（価格を読まない）
+    │   ├── AnomalyEngine.mqh     // 暦の文脈を点数化（価格を読まない）
+    │   ├── AdaptiveUpdate.mqh    // 更新間隔の段を決める（36章）
+    │   ├── EnergyEngine.mqh      // 圧縮の蓄積を点数化（37章）
+    │   ├── MarketState.mqh       // [2.30] 4エンジンを1つの状態に畳む（38章）
+    │   └── AlertEngine.mqh       // [2.30] 遷移した瞬間に1回だけ知らせる（39章）
     │
     ├── Display/                  // UI描画・表示制御
     │   ├── Dashboard.mqh         // レイアウトと更新の統括
@@ -1548,6 +1583,7 @@ src/
     └── Core/                     // システム共通基盤・ユーティリティ
         ├── Types.mqh              // 全モジュール共通の列挙型・構造体・IEngine（付録B）
         ├── AssetDetection.mqh     // ブローカー固有銘柄の自動検出（優先順位リスト方式）
+        ├── SessionClock.mqh       // 現地時刻でのセッション判定と夏時間（36.7-36.8）
         ├── Logger.mqh             // 動作ログ・エラーハンドリング・デバッグ出力
         └── Utils.mqh              // 配列操作・型変換・時刻計算等の汎用補助関数
 ```
@@ -1556,6 +1592,8 @@ src/
 - `Dashboard.mqh`は各Engineを**呼び出すだけ**で、計算ロジックを持たない
 - 各Engineは`Calculate()`または`Update()`を実行し、**計算結果だけ**を返す（描画処理を持たない）
 - Engine間の直接依存は最小限にし、必要なデータはCoreの共通構造体経由で受け渡す
+- **時刻の判定は `SessionClock.mqh` に集約する。** 各Engineが個別に夏時間を計算し始めると、同じ日に別々の答えを出す。Anomaly が使う東京時間も最終的にここへ寄せる（Ver2.20）
+- **`AdaptiveUpdate.mqh` は自分でタイマーを触らない。** `Evaluate()` で「変わった」と返すだけで、`EventSetMillisecondTimer()` を呼ぶのは本体である。モジュールが端末のタイマーを直接操作すると、複数箇所から張り直されたときに原因が追えなくなる
 
 ---
 
@@ -1625,6 +1663,45 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 | `Inp_AnomalyToConfidence` | bool | **false** | 信頼度の数値に加算するか。既定はfalse（8.9） |
 
 `Inp_ServerGmtOffset` は口座を変えたら見直す。ここがずれると五十日が1日ずれる。MT5の「気配値」で表示時刻とPCの時刻を比べれば確認できる。
+
+### 21.3 Session Clock 関連の入力パラメータ
+
+| パラメータ名 | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `Inp_ServerStdGmtOffset` | int | 2 | **冬時間での**サーバGMT差。夏時間分は加算しない |
+| `Inp_ServerFollowsEuDst` | bool | true | サーバが欧州夏時間に追従するか。大半の業者は true |
+| `Inp_SessionPreMinutes` | int | 15 | 開始何分前から警戒段に入るか |
+| `Inp_SessionOpenMinutes` | int | 30 | 開始後 何分を急変帯とみなすか |
+
+`Inp_ServerStdGmtOffset` に**夏時間を含めた値を入れてはならない**。夏時間はエンジンが自分で足す。含めて入力すると夏場だけ2時間ずれる。既存の `Inp_ServerGmtOffset`（既定3、Anomaly用）とは意味が違うので注意する。両者の統合は Ver2.20 で行う。
+
+### 21.4 Adaptive Update 関連の入力パラメータ
+
+| パラメータ名 | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `Inp_UpdateIntervalMs` | int | 1000 | **通常段**の更新間隔 |
+| `Inp_UpdateOnNewBarOnly` | bool | false | 足の確定時だけ更新（可変制御より優先される） |
+| `Inp_EnableAdaptive` | bool | true | 市場時間で更新間隔を変える |
+| `Inp_UpdateMsAlert` | int | 300 | 警戒段 |
+| `Inp_UpdateMsIdle` | int | 2000 | 静穏段 |
+| `Inp_AdaptiveDwellSec` | int | 60 | 段を変えた後の最低滞留秒（遅くする方向のみ） |
+| `Inp_EnergyRaisesTier` | bool | true | 高圧縮時も警戒段に上げる |
+
+どの値も内部で **100ms 未満に丸められない**。MT5のタイマーがそれより細かい保証をしないためである（36.3）。
+
+### 21.5 Energy Engine 関連の入力パラメータ
+
+| パラメータ名 | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `Inp_EnableEnergy` | bool | true | 圧縮を評価する |
+| `Inp_EnergyAtrPeriod` | int | 14 | ATR 期間 |
+| `Inp_EnergyBbPeriod` | int | 20 | ボリンジャー期間 |
+| `Inp_EnergyAdxPeriod` | int | 14 | ADX 期間 |
+| `Inp_EnergyLookback` | int | 100 | 順位を取る母数（本）。**閾値ではなく母数**である（37.4） |
+| `Inp_EnergyThBuilding` | int | 60 | Building とみなす点 |
+| `Inp_EnergyThLoaded` | int | 80 | Loaded とみなす点 |
+
+`Inp_EnergyThLoaded <= Inp_EnergyThBuilding` の場合は `Building + 10` に自動補正する。パーセンタイル化しているため、**銘柄や時間足を変えても閾値を調整する必要はない**。
 
 ---
 
@@ -2296,8 +2373,35 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
 | S5 | インジケーター削除 | チャートに `GMD_` オブジェクトが残らない |
 | S6 | アノマリーの発火 | 該当規則名と合計点がログに出る。0件の日は `Anomaly   0` と表示される |
 | S7 | 季節性のFX非混入 | `SetSeasonScore()` で季節性を極端に振っても、FXスコアが変わらない（10.13.2） |
+| S8 | 夏時間の欧米ずれ | `Test_SessionClock` で 2026.03.15 と 2026.10.28 が US=summer / EU=winter になる（36.8） |
+| S9 | 更新段の表示 | フッターに `1000ms Normal` のように**常に**間隔と段が出る。週末に起動すると `2000ms Idle` になる（36.12） |
+| S10 | 圧縮の材料不足 | 履歴が薄い銘柄で `Energy  --------  --` と灰色になる。**0 を表示しない**（37.5） |
 
 **S4とS5だけは絶対に省略しない。** この2つが、後から最も直しにくい不具合の発生源である。
+
+**S8は年に4回しか自然には検証できない。** 夏時間の境界を通過するのを待っていると、間違いに半年気づかない。`Test_SessionClock` が境界日を直接指定して検証するのは、この待ち時間を無くすためである。
+
+### 27.6 テストスクリプト一覧
+
+| ファイル | 対象 | 種別 |
+|---|---|---|
+| `Test_AssetDetection.mq5` | 銘柄検出 | 環境依存 |
+| `Test_CurrencyStrength.mq5` | 通貨強弱 | 環境依存 |
+| `Test_Confidence.mq5` | 信頼度 | 環境依存 |
+| `Test_AnomalyEngine.mq5` | アノマリー | **再現可能**（暦のみ） |
+| `Test_SessionClock.mq5` | セッションと夏時間 | **再現可能**（暦のみ） |
+| `Test_AdaptiveUpdate.mq5` | 更新段とヒステリシス | 半再現 |
+| `Test_EnergyEngine.mq5` | 圧縮の範囲・状態・銘柄横断 | 環境依存 |
+| `Test_MoneyFlow.mq5` | `[2.20]` 枠のみ | — |
+| `Test_MarketRegime.mq5` | `[2.20]` 枠のみ | — |
+
+**「再現可能」の2本は価格を読まない。** 日付を与えれば結果が一意に決まるので、失敗したときに原因が必ず特定できる。環境依存のテストは口座と履歴で結果が変わるため、`PASS/FAIL` よりログの中身を読むことが重要になる。
+
+`Test_EnergyEngine.mq5` が検証するのは点数の正しさではない。圧縮に正解は存在しないので当たり外れは検証できない。検証できるのは次の3つだけである。
+
+1. 銘柄をまたいで同じ尺度に収まるか（パーセンタイル化の確認）
+2. 材料不足のときに 0 を返していないか
+3. `RELEASED` が2回連続で立たないか（エッジであることの確認）
 
 ---
 
@@ -2580,6 +2684,11 @@ GMDは発注を行わない表示専用インジケーターである。した�
 | `BP` | BestPair | 501-599 |
 | `AN` | Anomaly | 701-799 |
 | `DP` | Display | 601-699 |
+| `EN` | Energy | 801-849 |
+| `SC` | SessionClock | 851-860 |
+| `AU` | AdaptiveUpdate | 861-870 |
+| `MS` | MarketState `[2.30]` | 871-880 |
+| `AL` | AlertEngine `[2.30]` | 881-890 |
 | `SY` | System / Core | 901-999 |
 
 主要コード：
@@ -2598,6 +2707,17 @@ GMDは発注を行わない表示専用インジケーターである。した�
 | `AN-701` | 規則表が上限に達した | WARN |
 | `AN-702` | 未知のアノマリーcodeを指定 | WARN |
 | `DP-601` | オブジェクト作成失敗 | ERROR |
+| `EN-801` | 指標ハンドルの取得に失敗 | ERROR |
+| `EN-802` | バー数が不足（120本未満） | WARN |
+| `EN-803` | バッファのコピーに失敗 | WARN |
+| `EN-804` | 圧縮が解放された（記録用） | INFO |
+| `SC-851` | サーバGMT差が想定外（−12〜+14の外） | WARN |
+| `SC-852` | セッション定義の時刻が不正 | WARN |
+| `AU-861` | タイマー再設定に失敗 | WARN |
+| `MS-871` | `[2.30]` 材料エンジンが未準備 | WARN |
+| `MS-872` | `[2.30]` 状態が短時間で規定回数以上変化 | WARN |
+| `AL-881` | `[2.30]` 通知の送信に失敗 | WARN |
+| `AL-882` | `[2.30]` 冷却時間により抑制（記録用） | INFO |
 | `SY-901` | メモリ確保失敗 | FATAL |
 
 ### 31.4 Logger の最小仕様
@@ -2735,6 +2855,11 @@ g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
 | L13 | 五十日の月をまたぐ営業日繰り上げは未対応 | 月末が日曜で決済が前月末金曜になる場合を扱っていない | 該当は年数回。判定の複雑さに対して効果が小さい | Ver2.20 |
 | L15 | Risk Bias の減衰係数（÷2）は経験的な値 | 株の季節性からリスク志向への伝達率を実測していない（10.13.3） | 上限 ±5 とFX非加算で影響を限定 | Ver3.00 |
 | L14 | 経済指標系アノマリー（FOMC前・CPI前・雇用統計前・連休前）は未実装 | `CalendarValueHistory()` がブローカー依存で使えない環境がある | 規則表に登録済み。`implemented` を立てるだけで有効化できる | Ver2.20 |
+| L16 | Energy は相対順位しか出さない | 過去100本のなかでの順位に正規化しているため、「絶対的に静かか」は分からない（37.4） | 年末年始のように全期間が閑散な場合、そのなかでの相対値になる。銘柄横断の比較可能性を優先した結果である | Ver3.00で絶対尺度を併記 |
+| L17 | ティック数は業者依存 | FXに実出来高がなく、参加量の代理としてティック数を使っている（軸3、重み20） | 業者を変えると軸3の水準が変わる。パーセンタイル化しているため影響は緩和されるが消えない | Ver3.00 |
+| L18 | Energy は今見ているチャート1本のみ | 28ペア分の指標ハンドルを持つと計算量とハンドル数が跳ね上がる（37.8） | 見ていない銘柄の圧縮を知っても行動につながらないと判断した | Ver3.00で圧縮ランキング |
+| L19 | セッション定義に祝日テーブルがない | 東京・ロンドン・ニューヨークの休場日を持っていない | 休場日も通常段で回る。CPUを余分に使うだけで誤表示にはならない | Ver2.30 |
+| L20 | サーバGMT差の入力が2系統ある | `Inp_ServerGmtOffset`（Anomaly用・既定3）と `Inp_ServerStdGmtOffset`（SessionClock用・既定2）が併存し、意味も既定値も違う | 片方だけ直すと東京時間の判定とセッション判定が食い違う。**設定時に必ず両方を見る** | Ver2.20で統合 |
 
 ---
 
@@ -2831,6 +2956,595 @@ v2.0        アーキテクチャ変更を伴う改訂
 ### Known Issues
 - 債券未対応環境では Bond行が Unavailable（仕様書 L1）
 ```
+
+---
+
+## 36. Adaptive Update Engine（更新間隔の可変制御）
+
+### 36.1 Purpose
+
+市場の状況に応じて更新間隔を変える。目的は**速くすることではなく、無駄をやめること**である。
+
+この順序を間違えると設計を誤る。「オープン時に速くしたい」から始めると、常時1秒のまま特定の時間だけ0.3秒にする実装になり、CPU負荷は増える一方になる。正しくは「**どこの市場も開いていない時間に1秒で回す必要はない**」から始める。土日、そしてニューヨーク終了からシドニー開始までの空白時間は、値がほとんど動かないのに毎秒28ペア分の計算をしている。ここを2秒に落とすことが先で、オープン時に速めるのはその予算を回すだけである。
+
+| | 従来（Ver2.10） | Ver2.11 |
+|---|---|---|
+| 静穏時 | 1000ms | **2000ms** |
+| 通常 | 1000ms | 1000ms |
+| 警戒時 | 1000ms | **300ms** |
+| 1日の総計算回数 | 約86,400 | **約60,000（推定）** |
+
+速い段を追加したのに総計算回数が減る。これが本モジュールの成果指標である。
+
+### 36.2 段は3つだけ（Tier Design）
+
+```
+TIER_IDLE   = 0   2000ms   どこも開いていない
+TIER_NORMAL = 1   1000ms   通常
+TIER_ALERT  = 2    300ms   セッション前後、または高圧縮
+```
+
+**段を細かくしてはならない。** 1000 / 750 / 500 / 300 / 250 のように刻むと、不具合報告を受けたときに「そのとき何msで回っていたか」を再現できなくなる。段が3つなら、フッターの表示と時刻から必ず特定できる。
+
+`ENUM_UPDATE_TIER` の値を 0 / 1 / 2 と定めているのは、速さの順序を数値比較で扱えるようにするためである（`want > current` なら速くなる方向）。
+
+### 36.3 Inputs
+
+| パラメータ | 既定 | 意味 |
+|---|---|---|
+| `Inp_EnableAdaptive` | true | 可変制御を使う |
+| `Inp_UpdateIntervalMs` | 1000 | 通常段 |
+| `Inp_UpdateMsAlert` | 300 | 警戒段 |
+| `Inp_UpdateMsIdle` | 2000 | 静穏段 |
+| `Inp_AdaptiveDwellSec` | 60 | 段を変えた後の最低滞留秒 |
+| `Inp_EnergyRaisesTier` | true | 高圧縮時も警戒段に上げる |
+
+どの段も内部で **100ms を下限**として丸める。MT5 のタイマーはそれより細かい保証がなく、指定しても実際には守られない。守られない値を設定できる状態のままにしておくと、動かない原因を探して時間を失う。
+
+### 36.4 段の決定（Calculation）
+
+```
+if(!enabled)                     → TIER_NORMAL
+if(alertRequested)               → TIER_ALERT      // Energy 由来
+if(clock.IsAnyPreOrOpen())       → TIER_ALERT      // セッション前後
+if(clock.GetOpenCount() == 0)    → TIER_IDLE
+else                             → TIER_NORMAL
+```
+
+### 36.5 ヒステリシス（切り替わりを抑える）
+
+段の判定を素直に反映すると、境界で条件が往復するたびに `EventKillTimer()` と `EventSetMillisecondTimer()` を叩き続ける。**タイマーを張り直した瞬間、イベントが1回落ちることがある。** 速くしたつもりで更新が飛ぶという最悪の結果になる。
+
+そこで最低滞留時間（既定60秒）を置く。ただし**一方向だけ**に適用する。
+
+| 方向 | 滞留時間 | 理由 |
+|---|---|---|
+| 遅い → 速い | **適用しない（即時）** | 速くしたい瞬間に間に合わなければ意味がない |
+| 速い → 遅い | 適用する | 戻るのが1分遅れても損失はない |
+
+この非対称が本モジュールの要点である。両方向に滞留させると急変に乗り遅れ、両方向とも即時にすると境界で暴れる。
+
+### 36.6 タイマー再設定のタイミング
+
+`Evaluate()` は **段が実際に変わったときだけ true を返す**。呼び出し側はその戻り値でのみタイマーを張り直す。
+
+```
+void ApplyAdaptiveTimer()
+  {
+   g_clock.Refresh();
+
+   if(Inp_EnergyRaisesTier && Inp_EnableEnergy)
+     {
+      const ENUM_ENERGY_STATE es = g_energy.GetState();
+      g_adaptive.RequestAlert(es == ENERGY_LOADED || es == ENERGY_RELEASED);
+     }
+
+   if(!g_adaptive.Evaluate())
+      return;
+
+   g_currentTimerMs = g_adaptive.GetIntervalMs();
+   EventKillTimer();
+   EventSetMillisecondTimer((uint)MathMax(100, g_currentTimerMs));
+  }
+```
+
+滞留時間60秒があるため、張り直しは1日に数回で収まる。
+
+### 36.7 セッション定義は「現地時刻」で持つ（重要）
+
+セッション時刻を日本時間で定義してはならない。ロンドンは現地8:00に開くのであって、日本時間16:00に開くわけではない。日本時間で書くと、欧州の夏時間が切り替わるたびに定数を書き換えることになる。地域が3つあれば年6回、手作業で直す運用になる。
+
+`Core/SessionClock.mqh` は各セッションを次の形で保持する。
+
+| セッション | 現地開始 | 現地終了 | 標準GMT差 | 夏時間 | 節目 |
+|---|---|---|---|---|---|
+| Sydney | 07:00 | 16:00 | +10 | 豪州（南半球・逆） | — |
+| Tokyo | 09:00 | 15:00 | +9 | **なし** | 09:55 仲値 |
+| London | 08:00 | 16:30 | 0 | 欧州 | — |
+| New York | **08:30** | 17:00 | −5 | 米国 | 09:30 株式 |
+
+計算は「現地時刻 = GMT + 標準GMT差 + (夏時間なら1時間)」で行う。**定義を書き換える必要がない**。日本に夏時間が無いことも、この形なら自然に表現できる。
+
+### 36.8 夏時間フラグは1つでは足りない（重要）
+
+**欧州と米国の夏時間は切り替え日が違う。**
+
+| 地域 | 開始 | 終了 |
+|---|---|---|
+| 欧州 | 3月最終日曜 01:00 UTC | 10月最終日曜 01:00 UTC |
+| 米国 | 3月第2日曜 07:00 UTC | 11月第1日曜 06:00 UTC |
+| 豪州 | 10月第1日曜 | 4月第1日曜（南半球で逆） |
+
+米国が先に始まり、後に終わる。**年間で合計3週間ほど、両者はずれる。** その期間、ロンドンとニューヨークの時差は通常の5時間ではなく4時間になる。
+
+夏時間フラグを1つで済ませると、この3週間だけ静かに1時間ずれる。エラーは出ず、ログにも残らず、ただニューヨークのオープン通知が1時間早いか遅いかするだけである。「なんとなく合わない」という最も見つけにくい壊れ方をする。
+
+したがって `CSessionClock` は `m_dstEU` / `m_dstUS` / `m_dstAU` を独立に計算する。検証のために任意日時での判定を `DstEuropeAt()` / `DstUsAt()` として公開している。夏時間の境界は年4回しか来ないので、実運用だけでは正しさを確認できないためである（27.6 参照）。
+
+### 36.9 ニューヨークは 08:30 ET（重要）
+
+ニューヨークの警戒開始を株式の09:30 ETに置くのは遅い。**CPI、雇用統計、小売売上高はいずれも 08:30 ET に発表される。** 値が最も飛ぶのはこの時刻であって、株式の寄り付きではない。
+
+本仕様ではニューヨークのセッション開始を **08:30 ET** と定義し、09:30 ET は「節目（keyLabel = Equity）」として別に保持する。
+
+なお当初案の「日本時間 21:15〜22:00」は、冬時間では 07:15〜08:00 ET、夏時間では 08:15〜09:00 ET に相当する。夏時間側は 08:30 ET を正しく含んでいる。着眼点は合っていて、基準となる時刻の指定だけが日本時間経由でぶれていた。
+
+### 36.10 Class Interface
+
+```
+class CSessionClock
+  {
+   bool  Init(CLogger *logger, const int serverStdGmtOffset = 2,
+              const bool serverFollowsEuDst = true,
+              const int preMinutes = 15, const int openMinutes = 30);
+   bool  Refresh(void);
+
+   datetime GmtNow(void);
+   datetime LocalNow(const ENUM_SESSION s);
+   datetime TokyoNow(void);
+
+   ENUM_SESSION_PHASE GetPhase(const ENUM_SESSION s);
+   int   GetMinutesToOpen(const ENUM_SESSION s);
+   bool  IsOpen(const ENUM_SESSION s);
+   int   GetOpenCount(void);
+   bool  IsAnyPreOrOpen(void);
+   ENUM_SESSION GetHottestSession(void);
+
+   bool  IsDstEurope(void);
+   bool  IsDstUS(void);
+   bool  DstEuropeAt(const datetime gmt);   // 検証用
+   bool  DstUsAt(const datetime gmt);       // 検証用
+
+   string GetDisplayText(void);
+   string BuildDetailText(void);
+  };
+
+class CAdaptiveUpdate
+  {
+   bool  Init(CLogger *logger, CSessionClock *clock,
+              const int msNormal = 1000, const int msAlert = 300,
+              const int msIdle = 2000, const int dwellSec = 60);
+   void  SetEnabled(const bool on);
+   void  RequestAlert(const bool on);
+   bool  Evaluate(void);                    // 変化したときだけ true
+
+   int   GetIntervalMs(void);
+   ENUM_UPDATE_TIER GetTier(void);
+   int   GetChangeCount(void);
+   string GetDisplayText(void);
+  };
+```
+
+### 36.11 GMT の求め方
+
+`TimeGMT()` は使わない。**ストラテジーテスターでは端末の現在時刻を返し、テスト対象の時刻とずれる。** 代わりに `TimeCurrent()` からサーバのGMT差を引いて求める。
+
+```
+gmt = TimeCurrent() - serverOffsetSec
+serverOffsetSec = (serverStdGmtOffset + (serverFollowsEuDst && dstEU ? 1 : 0)) * 3600
+```
+
+サーバのGMT差は業者ごとに違う（GMT+2 が多いが +3 もある）ため入力で与える。多くの業者は欧州夏時間に追従するので `Inp_ServerFollowsEuDst` の既定を true とする。
+
+### 36.12 Display
+
+フッターに常時、現在の間隔と段を出す。
+
+```
+28/28 pairs   14:32:07   1000ms Normal
+```
+
+可変にした以上、隠してはならない。性能の問題が起きたときに切り分けができなくなる。
+
+セッション行は別に1行取る。
+
+```
+Session  LDN  |  NY 8:30 in 42m
+Session  --                        （週末）
+```
+
+### 36.13 Error Codes
+
+| コード | 内容 | 深刻度 |
+|---|---|---|
+| `SC-851` | サーバGMT差が想定外（−12〜+14 の外） | WARN |
+| `SC-852` | セッション定義の時刻が不正 | WARN |
+| `AU-861` | タイマー再設定に失敗 | WARN |
+
+### 36.14 Future Expansion
+
+- 経済指標カレンダーとの連動（発表n分前に警戒段へ）。Ver2.30 の Alert Engine と同時に検討する
+- 祝日テーブル（東京・ロンドン・ニューヨークの休場日は静穏段でよい）
+- 段ごとの実測負荷をログに残し、`Inp_UpdateMsIdle` の自動調整に使う
+
+---
+
+## 37. Energy Engine（圧縮の蓄積検知）
+
+### 37.1 Purpose
+
+値幅が縮み、方向が消え、参加が減った状態を数値化する。「静か」の程度を測る。
+
+**このエンジンは方向を予測しない。** 圧縮が解ければどちらへでも飛ぶ。巻いたバネが上に跳ぶか下に跳ぶかは、バネの巻き具合からは分からない。分かるのは「跳ぶ準備ができているか」だけである。この区別を曖昧にした指標は、当たったときだけ記憶に残り、外れたときは忘れられる。
+
+### 37.2 「%」と呼ばない（重要）
+
+出力は 0〜100 の整数だが、**これを「%」と表示してはならない。**
+
+`Energy 92%` と書くと、読んだ人は「92%の確率でブレイクする」と受け取る。0〜100 は確率ではなく、単なる順位尺度である。過去100本のなかで今がどれだけ圧縮しているかを示すだけで、その後に何が起きるかについて何も言っていない。
+
+表示は次のようにする。
+
+```
+Energy  ■■■■■■■□  92  Loaded      ← 正
+Energy  92% ⚠ Breakout Alert       ← 誤（確率と誤読される）
+```
+
+### 37.3 5つの材料は独立していない（重要）
+
+当初案の判定材料と配点は次のものだった。
+
+| 材料 | 配点 |
+|---|---|
+| ATR が小さい | +20 |
+| ボリンジャー幅が小さい | +25 |
+| ADX 15以下 | +20 |
+| 出来高（ティック数）が少ない | +15 |
+| 高値安値の更新がない時間が長い | +20 |
+
+問題は配点ではなく、**材料の独立性**である。
+
+ATR が小さい、ボリンジャー幅が小さい、ADX が低い、レンジが続いている——この4つは**同じ現象を4つの角度から見ているだけ**である。ボリンジャー幅は標準偏差、ATR は平均的な値幅、どちらも「動いていない」を測る。レンジ継続も同じことを時間軸で言い換えたものにすぎない。
+
+これを足すと、静かなときは4つ同時に加点され、動き出すと4つ同時に減点される。結果として指標は 0 か 100 の二値に張り付き、その間の目盛りが機能しない。**滑らかな尺度が欲しかったのに、二値の判定器ができてしまう。**
+
+そこで軸を3つに畳む。
+
+| 軸 | 材料 | 重み | 独立性 |
+|---|---|---|---|
+| 軸1 圧縮 | ATR比 と BB幅（**min を取る**） | 50 | 値幅の縮み |
+| 軸2 無方向 | ADX | 30 | 方向の有無 |
+| 軸3 参加 | ティック数 | 20 | 参加者の数 |
+
+軸1で ATR と BB幅を足さずに **min** を取るのが要点である。両者は互いを裏付ける関係にあり、足すと二重計上になる。min を取れば「両方が縮んでいるときだけ高くなる」という、より厳しく、より意味のある判定になる。
+
+重みを 50 / 30 / 20 としたのは、圧縮が主役だからである。ADX が低くティック数が少なくても、値幅が縮んでいなければそれは単に閑散なだけで、蓄積ではない。
+
+### 37.4 絶対値ではなくパーセンタイル（重要）
+
+「ATR が小さい」は、比較対象を示さない限り意味を持たない。USDJPY の 0.05 と XAUUSD の 0.05 と BTCUSD の 0.05 は、まったく別の世界の話である。時間足でも変わる。M1 の ATR と H4 の ATR を同じ閾値で判定することはできない。
+
+したがって全ての材料を**過去 `Inp_EnergyLookback` 本（既定100本）のなかでの順位**に変換する。
+
+```
+percentile(x) = (x より小さい過去値の個数) / (母数) × 100
+軸1 = 100 − min(pct(ATR比), pct(BB幅))
+軸2 = 100 − pct(ADX)
+軸3 = 100 − pct(ティック数)
+
+Energy = round(軸1 × 0.50 + 軸2 × 0.30 + 軸3 × 0.20)
+```
+
+この形にすると、閾値表が不要になる。銘柄が増えても時間足が変わっても調整がいらない。**自己正規化している**のが最大の利点である。
+
+副作用として「絶対的に静かか」は分からなくなる。年末年始のように全期間が閑散な場合、そのなかでの相対順位しか出ない。これは制約として 34章に記載する。
+
+### 37.5 材料が足りないときは 0 を返さない（重要）
+
+母数に足りる本数（既定120本）が無いときは `ENERGY_UNAVAILABLE` を返し、表示は `Energy  --------  --` とする。
+
+**0 を返してはならない。** 0 は「圧縮していない」という意味を持つ。「分からない」を 0 で表現すると、分からないときに「圧縮していない」と断言することになる。新規上場銘柄や履歴の薄い銘柄でこれが起きる。
+
+色は灰色（`clrGray`）とする。これは 15.1 の「値が無いときは灰」に従う。
+
+### 37.6 水準ではなく解放が事象である（重要）
+
+**Energy 95 は事象ではない。** 圧縮は3日続くこともある。その3日間ずっと警告を出す価値はない。
+
+意味があるのは「圧縮が解けた瞬間」である。したがって状態機械を持つ。
+
+```
+ENERGY_UNAVAILABLE   材料不足
+ENERGY_NORMAL        圧縮していない        （< Building）
+ENERGY_BUILDING      圧縮が進んでいる      （>= Inp_EnergyThBuilding, 既定60）
+ENERGY_LOADED        十分に圧縮している    （>= Inp_EnergyThLoaded, 既定80）
+ENERGY_RELEASED      LOADED から抜けた     ← ここだけが事象
+```
+
+`ENERGY_RELEASED` は**エッジ**であり、1本の足で1回しか立たない。`IsReleasedNow()` は次の `Calculate()` で false に戻る。
+
+### 37.7 色は解放のときだけ赤（重要）
+
+`ENERGY_LOADED` を赤にしてはならない。圧縮は数日続くので、パネルが数日間赤いままになる。**赤が常態になれば赤の意味が消える。** そうなると本当に急いで見るべき場面で目が止まらない。
+
+| 状態 | 色 | 理由 |
+|---|---|---|
+| UNAVAILABLE | 灰 | 値が無い（15.1） |
+| NORMAL | 白 | 通常 |
+| BUILDING | 白 | 進行中。まだ何も起きていない |
+| LOADED | 白 | 準備完了。だが数日続きうる |
+| **RELEASED** | **赤** | 一瞬。ここだけ見てほしい |
+
+### 37.8 Inputs
+
+| パラメータ | 既定 | 意味 |
+|---|---|---|
+| `Inp_EnableEnergy` | true | 圧縮を評価する |
+| `Inp_EnergyAtrPeriod` | 14 | ATR 期間 |
+| `Inp_EnergyBbPeriod` | 20 | ボリンジャー期間 |
+| `Inp_EnergyAdxPeriod` | 14 | ADX 期間 |
+| `Inp_EnergyLookback` | 100 | 順位を取る母数（本） |
+| `Inp_EnergyThBuilding` | 60 | Building とみなす点 |
+| `Inp_EnergyThLoaded` | 80 | Loaded とみなす点 |
+
+**対象は今見ているチャート1本だけ**とする。28ペア分やると計算量が跳ね上がるうえ、見ていない銘柄の圧縮を知っても行動につながらない。複数銘柄への拡張は Ver3.00 で検討する。
+
+`Inp_EnergyThLoaded <= Inp_EnergyThBuilding` が指定された場合は `Building + 10` に自動補正する。設定ミスで状態機械が壊れるより、黙って直して動かすほうがよい（31.4 の方針に従う）。
+
+### 37.9 Output
+
+| 名前 | 型 | 内容 |
+|---|---|---|
+| `GetEnergy()` | int | 0〜100 |
+| `GetState()` | `ENUM_ENERGY_STATE` | 上記5状態 |
+| `IsReleasedNow()` | bool | 解放の瞬間（エッジ） |
+| `GetLoadedBars()` | int | LOADED が続いている本数 |
+| `GetAxisSqueeze()` | int | 軸1（0〜100） |
+| `GetAxisNoTrend()` | int | 軸2 |
+| `GetAxisVolume()` | int | 軸3 |
+| `GetAdx()` | double | ADX 生値（参考） |
+
+### 37.10 Display
+
+```
+Energy  ■■■■■□□□  65  Building
+Energy  ■■■■■■■□  92  Loaded
+Energy  ■■■■■■■■  96  Released      ← 赤
+Energy  --------  --                 ← 灰（材料不足）
+```
+
+バーは8マス固定。`filled = round(energy / 12.5)` で、`■` と `□` を並べる。8マスにしたのは、`Energy` のラベルと数値と状態名を合わせても1行に収まる幅だからである。
+
+### 37.11 Class Interface
+
+```
+class CEnergyEngine : public IEngine
+  {
+   bool  Init(CLogger *logger, const string symbol = NULL,
+              const ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
+              const int atrPeriod = 14, const int bbPeriod = 20,
+              const int adxPeriod = 14,
+              const int lookback = GMD_ENERGY_LOOKBACK);
+   void  Deinit(void);                       // 指標ハンドルを返す
+   void  SetThresholds(const int building, const int loaded);
+
+   bool  Calculate(void);
+   bool  IsReady(void);
+   string GetName(void);
+
+   int   GetEnergy(void);
+   ENUM_ENERGY_STATE GetState(void);
+   bool  IsReleasedNow(void);
+   int   GetLoadedBars(void);
+   int   GetAxisSqueeze(void);
+   int   GetAxisNoTrend(void);
+   int   GetAxisVolume(void);
+   double GetAdx(void);
+
+   string GetBarText(void);
+   string GetDisplayText(void);
+   string BuildDetailText(void);
+   color  GetColor(void);
+  };
+```
+
+### 37.12 Error Codes
+
+| コード | 内容 | 深刻度 |
+|---|---|---|
+| `EN-801` | 指標ハンドルの取得に失敗 | ERROR |
+| `EN-802` | バー数が不足（`GMD_ENERGY_MIN_BARS` 未満） | WARN |
+| `EN-803` | バッファのコピーに失敗 | WARN |
+| `EN-804` | 圧縮が解放された（記録用） | INFO |
+
+`EN-801` でも `Init()` は true を返す。`IsReady()` が false になり、表示は灰になる。指標が取れないことでダッシュボード全体が起動しないのは過剰である（31.4）。
+
+### 37.13 Implementation Notes
+
+- `iATR` / `iBands` / `iADX` のハンドルは `Init()` で1度だけ取り、`Deinit()` で必ず `IndicatorRelease()` する。毎回取ると端末のハンドルを食い潰す
+- ティック数は `CopyTickVolume()` を使う。FXに実出来高は無いので、これが唯一の参加量の代理指標である。ティック数は業者依存であることを承知して使う（34章）
+- ATR比は `ATR / Close` とし、価格水準の違いを吸収する。BB幅は `(upper − lower) / middle`
+- 順位計算は最新足を含めない。含めると自分自身と比較することになり、常に中央付近に寄る
+- 状態遷移は足の確定時ではなく毎回評価する。ただし `EN-804` のログは同一足で1回だけ出す
+
+### 37.14 Future Expansion
+
+- 複数銘柄への拡張（28ペア中どこが最も圧縮しているかのランキング）
+- 圧縮の**期間**を加味する（3日圧縮と3時間圧縮は同じ 90 でも意味が違う）
+- 解放後の追跡（解放から何本で何pips動いたかを記録し、実際に有効だったかを事後検証する）。**当たった記憶だけが残るのを防ぐ**ために、これは重要度が高い
+
+---
+
+## 38. Market State Engine [2.30]（市場状態の統合）
+
+### 38.1 Purpose
+
+Currency Strength / Money Flow / Energy / Anomaly の出力を1つの「現在の市場状態」に畳む。利用者が読むべき数字を4つから1つに減らす。
+
+「相場を見るのではなく、世界のお金の流れを見る」というコンセプトの終着点にあたる層である。
+
+### 38.2 なぜ Ver2.30 まで待つのか
+
+このエンジンは他の4つの出力を材料にする。材料が揃っていない段階で統合層を書くと、材料側の仕様が変わるたびにここを書き直すことになる。Money Flow が動くのは Ver2.20 なので、その次が最短である。
+
+### 38.3 状態を4つに絞る（重要）
+
+当初案の遷移は次のものだった。
+
+```
+Normal → Quiet Market → Energy Building → Breakout
+       → Trend → Exhaustion → Reversal
+```
+
+前半5つは観測できる。だが **Exhaustion（枯渇）と Reversal（転換）は違う。**
+
+「ここが天井だった」と言えるのは、下がったあとである。下がる前に天井だと言い切れるなら、それは指標ではなく予言である。この2つを「現在の状態」として画面に出すと、**いちばん外してほしくない場面で、いちばん自信ありげに間違える。**
+
+これは流れが間違っているという話ではない。人が相場を振り返るときの語りとしては正しい。ただ**物語と状態機械は別物**である。状態機械は、いま手元にあるデータだけで一意に決まらなければならない。
+
+したがって実装するのは、いま観測できる4つだけとする。
+
+| 状態 | 判定 | いま分かるか |
+|---|---|---|
+| `STATE_QUIET` | 圧縮も方向も無い | ○ |
+| `STATE_BUILDING` | 圧縮が進行（Energy >= 60） | ○ |
+| `STATE_EXPANSION` | 圧縮が解けて値幅が出た（RELEASED） | ○ |
+| `STATE_TRENDING` | 方向が継続（ADX上昇＋強弱の偏り） | ○ |
+| ~~Exhaustion~~ | 上昇の勢いが尽きた | **×** 事後にしか分からない |
+| ~~Reversal~~ | 方向が転換した | **×** 事後にしか分からない |
+
+`STATE_UNKNOWN` は材料不足を表す。
+
+### 38.4 判定材料と重み（Ver2.30 で確定）
+
+| 材料 | 役割 | 重み（暫定） |
+|---|---|---|
+| Energy | 圧縮の水準と RELEASED の有無 | 主 |
+| Currency Strength | 1位と8位の点差（方向の明確さ） | 主 |
+| Money Flow | リスクの向き | 従 |
+| Anomaly | 季節の追い風 | 従（単独で状態を変えない） |
+
+**暦（Anomaly）が価格を上回る影響を持ってはならない。** これは 10.13.5 で定めた原則と同じである。「五十日だから Trending」は成立しない。
+
+### 38.5 Exhaustion / Reversal の扱い（Ver3.00 で検討）
+
+事後ラベルとしてログにのみ残す方式を検討する。画面には出さない。
+
+```
+[2026.08.06 15:30]  STATE_TRENDING started
+[2026.08.06 18:45]  STATE_TRENDING ended (retro: EXHAUSTION at 17:20)
+```
+
+これなら「予言」にならず、かつ後から検証できる。表示と記録を分けるという 30章の方針の応用である。
+
+### 38.6 Display
+
+```
+State   Building         推奨：ブレイクアウト待ち
+State   --  [2.30]       ← 未実装のあいだ
+```
+
+一言（`GetAdviceText()`）は売買指示ではなく「いま何を待つ場面か」を示す。
+
+| 状態 | 一言 |
+|---|---|
+| QUIET | 待機 |
+| BUILDING | ブレイク待ち |
+| EXPANSION | 方向確認中 |
+| TRENDING | 追随可 |
+
+### 38.7 Error Codes
+
+| コード | 内容 | 深刻度 |
+|---|---|---|
+| `MS-871` | 材料エンジンが未準備 | WARN |
+| `MS-872` | 状態が短時間で規定回数以上変化 | WARN |
+
+---
+
+## 39. Alert Engine [2.30]（通知）
+
+### 39.1 Purpose
+
+条件が成立した「瞬間」に1回だけ知らせる。
+
+### 39.2 通知機能で必ず起きる5つの失敗
+
+| # | 失敗 | 対策 |
+|---|---|---|
+| 1 | **鳴りやまない**。`Energy >= 90` で通知すると、90以上である限り毎回鳴る。1秒更新なら1分で60回 | 水準ではなく「またいだ瞬間」で判定（**エッジ検出**） |
+| 2 | **境界で震える**。89.6 → 90.1 → 89.8 → 90.2 と往復すると、エッジ検出でも連発する | 点灯と消灯で閾値をずらす（**ヒステリシス**）。例：90で点灯、85で消灯 |
+| 3 | **同じことを何度も言う** | 種類ごとに冷却時間。既定は同一足内で1回まで |
+| 4 | **深夜に鳴る** | 静音時間帯 |
+| 5 | **`Alert()` の乱用**。モーダルの窓が出て他の操作が止まる | 既定は チャート表示 + Print のみ |
+
+5について。31.1 で「FATAL 以外で `Alert()` を使わない」と定めたのはエラー通知の話であり、利用者向け通知は別のカテゴリである。ただし**既定は同じくOFF**とする。窓と音は明示的に有効化させる。
+
+### 39.3 通知の出口（Channels）
+
+```
+CHANNEL_PANEL  = 1    ダッシュボード内に1行出す   既定ON
+CHANNEL_PRINT  = 2    エキスパートログ            既定ON
+CHANNEL_POPUP  = 4    Alert()                     既定OFF
+CHANNEL_SOUND  = 8    PlaySound()                 既定OFF
+CHANNEL_PUSH   = 16   SendNotification()          既定OFF
+```
+
+ビットフラグで組み合わせる。既定は `CHANNEL_PANEL | CHANNEL_PRINT`。
+
+### 39.4 通知する条件（Ver2.30 の対象）
+
+| # | 条件 | 種別 |
+|---|---|---|
+| A | Energy が LOADED から抜けた（RELEASED） | 遷移 |
+| B | Confidence が閾値をまたいだ | 遷移 |
+| C | Market State が変化した | 遷移 |
+| D | セッション開始 n 分前 | 時刻 |
+
+**すべて遷移または時刻であり、水準ではない。** 「Energy 90」を通知条件にしないのは、圧縮が数日続くことがあり、その間ずっと鳴らす価値が無いためである（37.6）。
+
+### 39.5 Class Interface
+
+```
+class CAlertEngine
+  {
+   bool  Init(CLogger *logger,
+              const int channels = (CHANNEL_PANEL | CHANNEL_PRINT),
+              const int cooldownSec = 300);
+
+   bool  Raise(const string key, const string message,
+               const ENUM_ALERT_LEVEL level = ALERT_NOTICE);
+
+   string GetLastMessage(void);
+   int   GetFiredCount(void);
+   bool  IsReady(void);
+   string GetDisplayText(void);
+  };
+```
+
+エッジ検出は**呼び出し側ではなく `CAlertEngine` の中**に置く。`key` ごとに前回の状態と発火時刻を保持する。呼び出し側に置くと、通知を1つ増やすたびに毎回同じ抑制コードを書くことになり、どこかで書き忘れる。
+
+### 39.6 Error Codes
+
+| コード | 内容 | 深刻度 |
+|---|---|---|
+| `AL-881` | 通知の送信に失敗（プッシュ設定なし等） | WARN |
+| `AL-882` | 冷却時間により抑制（記録用） | INFO |
+
+### 39.7 Future Expansion
+
+- 経済指標カレンダー連動（36.14 と同時）
+- 通知履歴のCSV出力。どの通知が実際に役に立ったかを事後に数える
 
 ---
 
