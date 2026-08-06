@@ -7,10 +7,10 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.3** |
+| Document Version | Project Specification **v1.4** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
-| Last Update | 2026-08-05 |
+| Last Update | 2026-08-06 |
 
 > **本書の位置づけ**：本書はGMDの単一の正（Single Source of Truth）である。実装・レビュー・将来の機能追加は、すべて本書を起点とする。
 >
@@ -25,7 +25,7 @@
 
 **Part II — 分析エンジン仕様**
 5. Currency Strength Engine　6. Money Flow Engine　7. Market Regime Engine
-8. Confidence Engine　9. Best Pair Engine　10. Asset Detection（概要）
+8. Confidence Engine　9. Best Pair Engine　10. Anomaly Engine
 
 **Part III — 表示仕様**
 11. 表示モード　12. マーケットオープン　13. 経済指標イベント
@@ -182,6 +182,11 @@ GMDは、価格そのものではなく「今、資金がどこからどこへ�
 │   │    MoneyFlow     │  │  MarketRegime    │                │
 │   │  資金の流出入    │  │  Risk ON / OFF   │                │
 │   └────────┬─────────┘  └────────┬─────────┘                │
+│                                                               │
+│   ┌──────────────────┐  ← 価格を読まない。暦だけを見る       │
+│   │  AnomalyEngine   │    ゆえに他のどれにも依存しない        │
+│   │  暦の文脈を点数化 │                                       │
+│   └────────┬─────────┘                                       │
 │            │                      │                          │
 │            └──────────┬───────────┘                          │
 │                       ▼                                       │
@@ -222,7 +227,7 @@ MT5 → AssetDetection → 各Engine → Confidence → Dashboard → Chart
 
 ### 4.3 分析エンジン一覧
 
-GMDは以下の5つの分析エンジンと、それらを束ねるダッシュボード表示層で構成される。
+GMDは以下の6つの分析エンジンと、それらを束ねるダッシュボード表示層で構成される。
 
 | エンジン | 役割 |
 |---|---|
@@ -231,6 +236,7 @@ GMDは以下の5つの分析エンジンと、それらを束ねるダッシュ�
 | Market Regime Engine | 複数指標を合成し、Risk ON / Risk OFF / Neutralを判定 |
 | Confidence Engine | 各エンジンの一致度から、シグナル全体の信頼度を算出 |
 | Best Pair Engine | 通貨強弱から、最も分かりやすいトレンドが出やすい通貨ペアを提案 |
+| Anomaly Engine | 五十日・季節性など暦から決まる統計的な偏りを点数化（価格を読まない） |
 
 これらの結果を `Display/Dashboard.mqh` が受け取り、選択された表示モード（12章）に応じて画面に描画する。
 
@@ -239,7 +245,9 @@ GMDは以下の5つの分析エンジンと、それらを束ねるダッシュ�
 上図のうち、Ver2.11で実際に動くのは以下の太線部分だけである。
 
 ```text
-MT5 → AssetDetection → CurrencyStrength → BestPair → Confidence → Dashboard → Chart
+MT5 → AssetDetection → CurrencyStrength → BestPair ─┐
+                                                     ├→ Confidence → Dashboard → Chart
+        （暦のみ）    →   AnomalyEngine  ────────────┘
                                                           ▲
                                        MoneyFlow / MarketRegime は Ver2.20
 ```
@@ -805,6 +813,42 @@ public:
 
 ---
 
+### 8.9 アノマリーとの関係（v1.4 追記）
+
+Anomaly Engine のスコアを Confidence の数値に足すかどうかは、**既定で足さない**（`Inp_AnomalyToConfidence = false`）。
+
+理由は、2つが答えている問いが違うことにある。
+
+| | 答えている問い |
+|---|---|
+| Confidence | この表示を信じてよいか（データが揃っているか、強弱が明確か） |
+| Anomaly | 今日は上がりやすい日か（暦の文脈） |
+
+前者はデータ品質の指標で、後者は期待値の偏りである。足し合わせると `74%` という1つの数字になるが、その74%が「データが足りない」のか「季節性が悪い」のかを読み手が区別できない。低い数字を見たときに取るべき行動が、前者なら「待つ」、後者なら「枚数を落とす」で、まったく違う。
+
+そのため既定では**2行に分けて並べて出す**。
+
+```text
+Confidence  78%  (FX only)
+Anomaly     +5   (五十日, 月末)
+```
+
+`Inp_AnomalyToConfidence = true` にすると加算する。その場合、表示は必ず内訳付きになる。
+
+```text
+Confidence  83%  (78 +5)
+```
+
+`83%` とだけ出すことはしない。合成した数値を根拠なしに見せると、後から検証できなくなる。
+
+加算する場合の式は次のとおり。scope は現在チャートの銘柄で決める（円のペアなら `SCOPE_JPY`）。
+
+\[
+Confidence = \mathrm{clip}\left( Base + Score_{anomaly},\ 0,\ 100 \right)
+\]
+
+---
+
 ## 9. ベストペア・エンジン（Best Pair Engine）
 
 ### 9.1 Purpose
@@ -892,50 +936,348 @@ public:
 
 ---
 
-## 10. アセット検出（Asset Detection）—— 概要
+## 10. アノマリー・エンジン（Anomaly Engine）
 
-> **重要**：本章は概要である。実装に使う詳細設計（状態モデル・データ構造・公開API・テストケース）は **26章 Asset Detection Flow** に集約した。`Core/AssetDetection.mqh` を実装する際は26章を正とする。
+### 10.0 実装フェーズ分割
+
+暦だけで判定できるものと、外部データが必要なものを分ける。前者は今すぐ動く。後者は環境依存があるため後回しにする。
+
+| フェーズ | 対象 | 理由 |
+|---|---|---|
+| **[2.11]** | 五十日 / 月末 / 四半期末 / 年末 / 年始 / Halloween / Sell in May / Turn of the Month / Santa Claus / January / 曜日効果 / Weekend Effect | 日付と時刻だけで判定できる。外部データ不要 |
+| **[2.20]** | FOMC前 / CPI前 / 雇用統計前 / 連休前 | MQL5の `CalendarValueHistory()` はブローカー依存で使えない環境がある。祝日判定も同様 |
+| **[2.20]** | VIX急騰 → 金 | Money Flow Engine の結果が必要 |
+| **[3.00]** | 実績に基づく重みの自動調整 | シグナル履歴の蓄積が前提 |
+
+[2.20] の規則は表に**登録済みだが `implemented = false`** としてある。判定関数がまだ無いため加点されない。実装するときは判定を1つ書き、このフラグを `true` にするだけで済む。
+
+---
 
 ### 10.1 Purpose
 
-ブローカーごとに異なる銘柄名の違いを吸収し、GMD内部では常に論理名（`ASSET_GOLD` 等）だけで資産を参照できるようにする。ブローカー依存コードを1ファイルに隔離するための層である。
+暦から決まる統計的な偏りを点数化し、「今どちらが強いか」とは別の軸として提示する。
 
-### 10.2 処理フロー
+通貨強弱が示すのは「今この瞬間の力関係」である。それが分かっても、その日が五十日なのか、9月なのか、年末で流動性が枯れているのかで、同じ強弱の意味は変わる。この章のエンジンは、その**時間的な文脈**だけを担当する。
 
-旧仕様の単純な1本道フローを、**5段階パイプライン**に拡張する。
+---
 
-```text
-Detect → Validation → Availability → Cache → Engineへ引き渡し
-```
+### 10.2 なぜ独立したエンジンにするのか
 
-名前が見つかっただけでは不十分である。名前が存在しても、ヒストリーが0本、気配値が0、Market Watchに未登録、といった「名前だけある銘柄」が実在するため、**実際にデータが取れるかを検証する工程（Validation）を必須とする**。
+Currency Strength に組み込まない理由は3つある。
 
-### 10.3 ブローカー間の表記ゆれ対応
+**1. 入力の種類が違う**
 
-同じ資産でも銘柄名が異なるため、**優先順位付きの候補リストから最初に見つかったものを採用**する。
+強弱は価格を読む。アノマリーは暦しか読まない。混ぜると「価格が取れないから季節性も出せない」という不要な依存が生まれる。実際このエンジンは、ブローカーに1銘柄も存在しなくても正常に動く。
 
-```text
-例：Gold
-XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
-```
+**2. 検証の方法が違う**
 
-この「候補から実在するものを探す」ロジックは Best Pair Engine（9章）とも共通化し、`Core/AssetDetection.mqh` 内の汎用関数1箇所にまとめる（重複実装を避ける）。
+強弱の検算は「合計が理論値に近いか」で行う。アノマリーの検算は「特定の日付を与えたら期待した規則が発火するか」で行う。前者は実データが必要で、後者は日付を渡すだけで完全に再現できる。テストの性質が違うものは、別のファイルに置いたほうが両方とも書きやすい。
 
-候補リストを手書きで増やし続けるのには限界があるため、**ブローカー共通サフィックスの自動推定**（例：現在チャートが `EURUSD.a` なら `.a` を全候補に自動付与）と**正規化部分一致検索**を併用する。詳細は26.6。
+**3. 増え方が違う**
 
-### 10.4 カテゴリ別 対象銘柄例
+強弱の計算式はほぼ固定である。アノマリーは今後も増える。増えるものと増えないものを同じファイルに置くと、変更のたびに固定部分まで読み直すことになる。
 
-| カテゴリ | 代表銘柄例 |
+---
+
+### 10.3 Inputs
+
+| 名前 | 型 | 既定 | 意味 |
+|---|---|---|---|
+| `Inp_EnableAnomaly` | `bool` | `true` | エンジン全体のON/OFF |
+| `Inp_AnomalyMinStars` | `int` | `4` | この星数未満の規則を無効にする |
+| `Inp_ServerGmtOffset` | `int` | `3` | サーバ時刻のGMT差。五十日の判定に必須 |
+| `Inp_UseSeasonScore` | `bool` | `true` | 月別季節性を使うか |
+| `Inp_AnomalyToConfidence` | `bool` | `false` | 信頼度の数値に加算するか（8.9参照） |
+
+`Inp_ServerGmtOffset` を入力にしている理由は 10.6 に書く。
+
+---
+
+### 10.4 規則表
+
+規則は**表として持つ**。判定を `if` の羅列で書くと、1つ足すたびに関数が伸びて、どこを触ればよいか分からなくなる。
+
+各規則は次の6つを持つ。
+
+| 項目 | 意味 |
 |---|---|
-| FX | USDJPY, EURUSD, GBPUSD 他28ペア |
-| 貴金属 | Gold, Silver |
-| 株価指数 | SPX500, NAS100, US30, JP225, GER40, UK100 |
-| 暗号資産 | BTC, ETH |
-| 債券 | US10Y, US30Y |
+| `code` | 内部識別子。`"GOTOBI"` など |
+| `label` | 表示名。`"五十日"` |
+| `scope` | **どの資産に効く話か** |
+| `score` | 該当時の加点（符号付き） |
+| `stars` | 根拠の強さ 1〜5 |
+| `implemented` | `false` なら [2.20] 以降の予約枠 |
 
-### 10.5 Class Interface
+#### 10.4.1 登録済みの規則
 
-26.10 を参照。
+| code | 表示名 | scope | 点 | 星 | 実装 |
+|---|---|---|---|---|---|
+| `GOTOBI` | 五十日 | JPY | +3 | ★5 | [2.11] |
+| `MONTH_END` | 月末 | FX | +2 | ★5 | [2.11] |
+| `QUARTER_END` | 四半期末 | FX | +3 | ★5 | [2.11] |
+| `YEAR_END` | 年末（流動性低下） | FX | **-2** | ★5 | [2.11] |
+| `YEAR_START` | 年始 | FX | +2 | ★5 | [2.11] |
+| `HALLOWEEN` | Halloween Effect | Equity | +3 | ★5 | [2.11] |
+| `SELL_IN_MAY` | Sell in May | Equity | -3 | ★5 | [2.11] |
+| `TURN_MONTH` | Turn of the Month | Equity | +2 | ★5 | [2.11] |
+| `SANTA` | Santa Claus Rally | Equity | +3 | ★5 | [2.11] |
+| `JANUARY` | January Effect | Equity | +2 | ★4 | [2.11] |
+| `MONDAY` | Monday Effect | Equity | -1 | ★3 | [2.11] |
+| `FRIDAY` | Friday Effect | Equity | +1 | ★3 | [2.11] |
+| `WEEKEND_BTC` | Weekend Effect | Crypto | -1 | ★3 | [2.11] |
+| `PRE_FOMC` | FOMC前 | Bond | +2 | ★4 | [2.20] |
+| `PRE_CPI` | CPI前 | Bond | -2 | ★4 | [2.20] |
+| `PRE_NFP` | 雇用統計前 | Bond | -3 | ★5 | [2.20] |
+| `PRE_HOLIDAY` | 連休前 | FX | -2 | ★4 | [2.20] |
+| `VIX_SPIKE` | VIX急騰 → 金 | Metal | +3 | ★4 | [2.20] |
+
+#### 10.4.2 年末を減点にした理由
+
+年末は**加点ではなく減点**とした。機関投資家が休みに入り、流動性が落ちる。値幅は出るが、それは方向感ではなく板の薄さによるものである。「動きやすい」と「読みやすい」は別で、このエンジンが示すべきは後者である。
+
+#### 10.4.3 曜日効果を星3にした理由
+
+Monday Effect と Friday Effect は、1980年代までの米国株データでは確認されていたが、2000年代以降のデータでは有意性が大きく落ちている。広く知られた結果、先回りされて消えたと説明されることが多い。
+
+そこで**星3**とし、`Inp_AnomalyMinStars = 4`（既定）では**自動的に無効になる**ようにした。使いたければ星の閾値を下げれば有効になる。消さずに残しているのは、後で検証したくなったときに表から復活させられるようにするためである。
+
+---
+
+### 10.5 Calculation
+
+#### 10.5.1 適用範囲（scope）による分離
+
+**これがこのエンジンで最も重要な仕組みである。**
+
+Sell in May は株価指数の話である。これを USDJPY の判断に足してはいけない。同じ「5月」でも、株にとっての5月と円にとっての5月は違う現象を指す。
+
+そこで各規則は必ず `scope` を持ち、集計も scope ごとに独立して行う。
+
+```text
+SCOPE_FX      通貨ペア全般
+SCOPE_JPY     円が絡むペアのみ（五十日など）
+SCOPE_EQUITY  株価指数
+SCOPE_BOND    債券
+SCOPE_METAL   金・銀
+SCOPE_CRYPTO  暗号資産
+```
+
+`SCOPE_JPY` は `SCOPE_FX` の**部分集合**として扱う。円のペアを見ているときは、FXの規則（月末など）と円の規則（五十日）の両方が乗る。
+
+\[
+Score_{JPY} = \sum_{scope = JPY} score + \sum_{scope = FX} score
+\]
+
+USDJPY のチャートでは五十日が乗り、EURUSD のチャートでは乗らない。これが正しい挙動である。
+
+#### 10.5.2 星による選別
+
+`stars < Inp_AnomalyMinStars` の規則は、該当していても加点しない。根拠の強さで足切りする仕組みである。
+
+#### 10.5.3 合計の打ち止め
+
+\[
+Score_{final} = \mathrm{clip}(Score_{raw},\ -15,\ +15)
+\]
+
+上限は `GMD_ANOMALY_CAP = 15`。
+
+**アノマリーは重ねれば重ねるほど当たるものではない。** 条件が5つ揃った日は、1つだけ揃った日より5倍有利、ということはない。むしろ「条件を並べていけばいくらでも都合のよい日を作れる」というのがアノマリー分析の典型的な失敗である。上限を置くのは、その暴走を仕組みとして止めるためである。
+
+#### 10.5.4 排他になる規則
+
+Halloween Effect（11月〜4月）と Sell in May（5月〜10月）は、同じ現象の裏表である。したがって**どちらか片方しか成立しない**。両方を足して打ち消し合うことはない。実装では `if / else` で分岐させている。
+
+---
+
+### 10.6 五十日（ごとうび）の判定
+
+★5 の中で唯一、日付だけでは判定できない規則である。
+
+#### 10.6.1 判定条件
+
+```text
+1. 東京時間で日付を取る
+2. 日が5の倍数、または月末
+3. 土日にあたる場合は前営業日（金曜）へ繰り上げ
+4. 東京 8:00 〜 10:30 の時間帯のみ有効
+```
+
+#### 10.6.2 東京時間で判定する理由
+
+五十日は**日本企業の決済日**である。判定する暦は日本の暦でなければならない。
+
+MT5のサーバ時刻は多くの業者でGMT+2〜+3である。GMT+3のサーバで日本時間の朝9時は、サーバ時刻では前日の3時にあたる。**サーバ時刻の日付をそのまま使うと、月初と月末で1日ずれる。** 25日を五十日と判定すべき朝に、サーバはまだ24日を指している。
+
+そこで `Inp_ServerGmtOffset` を入力に置き、サーバ時刻から一度GMTへ戻し、そこへ+9時間して東京時間を作る。
+
+\[
+T_{tokyo} = T_{server} - offset + 9
+\]
+
+`TimeGMT()` を使わないのは、ストラテジーテスター内では実時間が返るためである。過去日付の検証ができなくなる。
+
+#### 10.6.3 時間帯を限定する理由
+
+五十日の効果は**仲値（東京 9:55）に向けた実需の買い**として現れる。仲値を過ぎれば材料は消える。にもかかわらず終日加点すると、ロンドン時間やニューヨーク時間にも「五十日だから買い」という誤った表示が出続ける。
+
+そのため 8:00〜10:30 の窓を設けた。この窓を出たら、五十日は該当しない扱いになる。
+
+#### 10.6.4 営業日の繰り上げ
+
+25日が土曜なら、決済は前営業日の金曜24日に行われる。したがって金曜日には、翌日・翌々日が五十日かどうかも見る。
+
+月をまたぐ繰り上げ（月末が日曜で、決済が金曜になる場合）は、[2.11] では扱っていない。判定の複雑さに対して効果が小さいためである。34章の制約に記載した。
+
+---
+
+### 10.7 Market Season Score（月別季節性）
+
+月ごとに期待値を持たせる。
+
+| 月 | 点 | 根拠 |
+|---|---|---|
+| 1月 | +1 | January Effect |
+| 2月 | +1 | Halloween 期間内 |
+| 3月 | 0 | |
+| 4月 | 0 | |
+| 5月 | -1 | Sell in May の入口 |
+| 6月 | 0 | |
+| 7月 | 0 | |
+| 8月 | -2 | 夏枯れ。流動性が薄い |
+| 9月 | -2 | 統計上もっとも弱い月 |
+| 10月 | 0 | |
+| 11月 | +2 | Halloween Effect の入口 |
+| 12月 | +2 | |
+
+この表は `SetSeasonScore(month, score)` で実行時に変更できる。値をハードコードせず変えられるようにしたのは、自分の検証結果で上書きできるようにするためである。
+
+**この表は株価指数の季節性である。** したがって加算先は `SCOPE_EQUITY` に限定する。9月が弱いのは株の話であって、USDJPY が9月に下がるという話ではない。
+
+季節性の状態は3つに丸めて表示する。
+
+```text
+score > 0  → Bull
+score = 0  → Neutral
+score < 0  → Bear
+```
+
+---
+
+### 10.8 Output
+
+| 名前 | 型 | 意味 |
+|---|---|---|
+| `GetScore(scope)` | `int` | 打ち止め後のスコア。**外に出すのはこれ** |
+| `GetRawScore(scope)` | `int` | 打ち止め前の素点。検証用 |
+| `GetHitCount()` | `int` | 該当した規則の数 |
+| `GetHitLabel(i)` | `string` | i番目の該当規則名 |
+| `GetHitScore(i)` | `int` | i番目の点 |
+| `GetSeason()` | `ENUM_SEASON_STATE` | Bull / Neutral / Bear |
+| `GetSeasonScore()` | `int` | 当月の季節性スコア |
+
+---
+
+### 10.9 Display
+
+```text
+Anomaly +5  (五十日, 月末)
+```
+
+表示は「合計」と「根拠」を必ず並べる。`+5` だけでは、なぜ5なのか後から説明できない。該当が多い日は先頭2件までを出し、全件はログへ回す。
+
+色は 15章の原則どおり3色に収める。
+
+| 条件 | 色 |
+|---|---|
+| `score >= +3` | 赤 |
+| `score <= -3` | 青 |
+| それ以外 | 白 |
+| 未計算 | 灰 |
+
+該当が0件のときは `Anomaly   0` と出す。空欄にはしない。空欄は「機能していない」と「該当なし」の区別がつかない。
+
+---
+
+### 10.10 Class Interface
+
+```cpp
+class CAnomalyEngine : public IEngine
+{
+private:
+   CLogger           *m_log;
+   SAnomalyRule       m_rules[GMD_ANOMALY_MAX];
+   int                m_ruleCount;
+   SAnomalyHit        m_hits[GMD_ANOMALY_MAX];
+   int                m_hitCount;
+   int                m_serverGmtOffset;
+   int                m_minStars;
+   bool               m_useSeason;
+   int                m_seasonTable[13];
+   int                m_scopeScore[7];
+   ENUM_SEASON_STATE  m_season;
+   bool               m_ready;
+
+public:
+   bool               Init(CLogger *logger,
+                           const int serverGmtOffset = 3,
+                           const int minStars = 4,
+                           const bool useSeason = true);
+
+   void               SetRuleEnabled(const string code, const bool enabled);
+   void               SetSeasonScore(const int month, const int score);
+
+   bool               Calculate(void);
+   bool               IsReady(void) { return m_ready; }
+   string             GetName(void) { return "Anomaly"; }
+
+   int                GetScore(const ENUM_ANOMALY_SCOPE scope);
+   int                GetRawScore(const ENUM_ANOMALY_SCOPE scope);
+   int                GetHitCount(void);
+   string             GetHitLabel(const int index);
+   int                GetHitScore(const int index);
+   ENUM_SEASON_STATE  GetSeason(void);
+   int                GetSeasonScore(void);
+
+   string             GetDisplayText(const ENUM_ANOMALY_SCOPE scope = SCOPE_FX);
+   string             BuildDetailText(const ENUM_ANOMALY_SCOPE scope = SCOPE_FX);
+   color              GetColor(const ENUM_ANOMALY_SCOPE scope = SCOPE_FX);
+};
+```
+
+---
+
+### 10.11 Implementation Notes
+
+- **価格を一切読まない。** `SymbolInfo*` も `CopyClose` も呼ばない。したがって `AssetDetection` に依存せず、銘柄が1つも見つからない口座でも動く
+- `Calculate()` は常に成功する。`IsReady()` が false になるのは `Calculate()` を1度も呼んでいないときだけ
+- 計算量は規則数に比例するだけで、実測で1ms未満に収まる。毎ティック呼んでも問題ないが、日付が変わらなければ結果も変わらないため、他エンジンと同じ更新間隔に合わせている
+- 規則の追加は `BuildRuleTable()` に `AddRule()` を1行足す。判定は `Calculate()` に1行足す。**他のファイルは触らない**
+
+#### 10.11.1 このエンジンの限界を明記しておく
+
+アノマリーは、その性質上、次の危険を抱えている。設計者が自覚していないと、数字が出ているだけで信じてしまう。
+
+**1. 検証していない**
+
+上記の点数（+3, -2 など）は、公開されている研究や経験則に基づく初期値であり、**このプロジェクトで統計検証した数値ではない**。星の数も同様である。実データでの検証は Ver3 の課題とし、それまでは「仮の重み」として扱う。
+
+**2. 後追いで消える**
+
+広く知られたアノマリーは、参加者が先回りすることで縮小する。曜日効果がその典型である。過去に効いた事実は、今後も効く保証にならない。
+
+**3. 条件を足せば何でも言える**
+
+「五十日かつ月曜かつ月末」のような条件を重ねれば、サンプル数が数件になる。数件で高い勝率が出るのは当たり前で、それは発見ではない。打ち止め（10.5.3）と星による選別（10.5.2）は、この危険に対する構造的な歯止めである。
+
+---
+
+### 10.12 Future Expansion
+
+- **[2.20]** 経済カレンダー連携。`CalendarValueHistory()` が使えるか起動時に判定し、使えない環境では該当規則を自動で無効化する
+- **[2.20]** 祝日判定。`SymbolInfoSessionTrade()` から取引時間のない日を拾って連休を推定する
+- **[3.00]** 的中率の記録。各規則が発火した日の翌日リターンを蓄積し、点数を自動調整する
+- **[3.00]** 通貨別の季節性。現在は株価指数の季節性のみを持つが、通貨ごとの月別傾向を別表として追加する
 
 ---
 
@@ -1085,6 +1427,8 @@ GMDの目的は一瞬で資金の流れを判断することである。多段�
 | Project Specification **v1.2** | **4章に Architecture Diagram を新設**（MT5 → Core → Engines → Display → Chart の全体図、Ver2.11で動く範囲の明示）。26.0のキャッシュを **L1メモリ[2.11] / L2 CSV[2.20] / 高度な管理[3.00]** の3段階に再定義し、L1をVer2.11へ前倒し。高度なAvailability を Ver2.20、性能最適化を Ver3.00 に整理。以降、仕様書の更新は実装で判明した差分のみに絞る |
 | Project Specification **v1.3** | **Currency Strength Engine v2 へ全面改訂**（5章）。対象を **8通貨・28ペア**（NZD追加）に確定し、「7通貨・28ペア」の誤りを訂正。判定を直近1本の陰陽線から **直近N本の重み付き集計**（既定3本・重み1:2:3）に変更。勢い（-7〜+7）と**7段階の矢印**を新設。**15章の配色を赤・白・青の3色に簡素化**し、6段階グラデーションを廃止。8.3.1に **Ver2.11用のConfidence暫定式** を追加。9.3のBest Pair解決フローを `GetFxSymbol()` ベースに書き換え、反転時は方向をSELLに変換する規則を明記 |
 
+| Project Specification **v1.4** | **10章に Anomaly Engine を新設**（規則表方式、scope による資産分離、五十日の東京時間判定、月別 Market Season Score、合計の打ち止め ±15、星による選別）。旧10章「アセット検出 概要」を **26.16へ移設**し、Part II を6エンジン構成に整理。**8.9** を新設し、アノマリーを Confidence の数値に既定で加算しない理由を明記。エラーコードに `AN`（701-799）を追加。4章の図と27.0のスモークテストにアノマリーを反映。34章に L12〜L14 を追加 |
+
 ---
 
 ## 18. モジュール構成（System Modules Architecture）
@@ -1099,13 +1443,14 @@ src/
     │   ├── MoneyFlow.mqh         // アセット間の資金流出入分析
     │   ├── MarketRegime.mqh      // Risk Score (0-100) および Risk ON/OFF判定
     │   ├── Confidence.mqh        // 総合確信度 (0-100%) 計算
-    │   └── BestPair.mqh          // 最強vs最弱の「ベストペア」自動選定
+    │   ├── BestPair.mqh          // 最強vs最弱の「ベストペア」自動選定
+    │   └── AnomalyEngine.mqh     // 暦の文脈を点数化（価格を読まない）
     │
     ├── Display/                  // UI描画・表示制御
-    │   ├── Dashboard.mqh         // 画面全体のUIコントロール・レイアウト統括
-    │   ├── SummaryPanel.mqh      // Market Summary描画
-    │   ├── RankingPanel.mqh      // 通貨強弱ランキング描画
-    │   └── MoneyFlowPanel.mqh    // マネーフロー・アセット状況描画
+    │   ├── Dashboard.mqh         // レイアウトと更新の統括
+    │   └── DrawObjects.mqh       // オブジェクトの生成・差分更新・一括削除
+    │                             // ※ Ver2.11の表示は1枚パネル。パネル単位で
+    │                             //   3分割せず「描画の下請け」と「レイアウト」で切る
     │
     └── Core/                     // システム共通基盤・ユーティリティ
         ├── Types.mqh              // 全モジュール共通の列挙型・構造体・IEngine（付録B）
@@ -1175,6 +1520,18 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 | `Inp_CachePersist` | bool | true | `[2.20]` 検出結果を永続化し、次回起動を瞬時化 |
 | `Inp_DetectLogLevel` | enum | INFO | 検出処理のログ粒度（OFF/ERROR/WARN/INFO/DEBUG） |
 | `Inp_ShowUnavailable` | bool | true | 未対応銘柄を `Unavailable` として表示するか、行ごと非表示にするか |
+
+### 21.2 Anomaly Engine 関連の入力パラメータ
+
+| パラメータ名 | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `Inp_EnableAnomaly` | bool | true | アノマリー・エンジン全体のON/OFF |
+| `Inp_AnomalyMinStars` | int | 4 | この星数未満の規則を無効化。既定では曜日効果が外れる（10.4.3） |
+| `Inp_ServerGmtOffset` | int | 3 | サーバ時刻のGMT差。**五十日の判定精度に直結する**（10.6.2） |
+| `Inp_UseSeasonScore` | bool | true | 月別 Market Season Score を使うか |
+| `Inp_AnomalyToConfidence` | bool | **false** | 信頼度の数値に加算するか。既定はfalse（8.9） |
+
+`Inp_ServerGmtOffset` は口座を変えたら見直す。ここがずれると五十日が1日ずれる。MT5の「気配値」で表示時刻とPCの時刻を比べれば確認できる。
 
 ---
 
@@ -1780,6 +2137,53 @@ Step 12 [2.20] Stale判定を追加
 
 ---
 
+### 26.16 アセット検出の概要（v1.4でPart IIから移設）
+
+> **重要**：本章は概要である。実装に使う詳細設計（状態モデル・データ構造・公開API・テストケース）は **26章 Asset Detection Flow** に集約した。`Core/AssetDetection.mqh` を実装する際は26章を正とする。
+
+#### 26.16.1 Purpose
+
+ブローカーごとに異なる銘柄名の違いを吸収し、GMD内部では常に論理名（`ASSET_GOLD` 等）だけで資産を参照できるようにする。ブローカー依存コードを1ファイルに隔離するための層である。
+
+#### 26.16.2 処理フロー
+
+旧仕様の単純な1本道フローを、**5段階パイプライン**に拡張する。
+
+```text
+Detect → Validation → Availability → Cache → Engineへ引き渡し
+```
+
+名前が見つかっただけでは不十分である。名前が存在しても、ヒストリーが0本、気配値が0、Market Watchに未登録、といった「名前だけある銘柄」が実在するため、**実際にデータが取れるかを検証する工程（Validation）を必須とする**。
+
+#### 26.16.3 ブローカー間の表記ゆれ対応
+
+同じ資産でも銘柄名が異なるため、**優先順位付きの候補リストから最初に見つかったものを採用**する。
+
+```text
+例：Gold
+XAUUSD → GOLD → GOLDmicro → XAUUSD.r → XAUUSD.a ...
+```
+
+この「候補から実在するものを探す」ロジックは Best Pair Engine（9章）とも共通化し、`Core/AssetDetection.mqh` 内の汎用関数1箇所にまとめる（重複実装を避ける）。
+
+候補リストを手書きで増やし続けるのには限界があるため、**ブローカー共通サフィックスの自動推定**（例：現在チャートが `EURUSD.a` なら `.a` を全候補に自動付与）と**正規化部分一致検索**を併用する。詳細は26.6。
+
+#### 26.16.4 カテゴリ別 対象銘柄例
+
+| カテゴリ | 代表銘柄例 |
+|---|---|
+| FX | USDJPY, EURUSD, GBPUSD 他28ペア |
+| 貴金属 | Gold, Silver |
+| 株価指数 | SPX500, NAS100, US30, JP225, GER40, UK100 |
+| 暗号資産 | BTC, ETH |
+| 債券 | US10Y, US30Y |
+
+#### 26.16.5 Class Interface
+
+26.10 を参照。
+
+---
+
 ## 27. Test Plan（テスト計画）
 
 > **本章は暫定である。** テスト項目は、コードを書く前に机上で作ると必ず的外れになる。本章の詳細はVer2.11の実装完了後に、実際に発生した不具合をもとに確定させる（そのとき本書を `v1.2` に更新する）。
@@ -1797,6 +2201,7 @@ Step 12 [2.20] Stale判定を追加
 | S3 | 検出結果のログ出力 | 検出した銘柄名と状態が全件出力される |
 | S4 | 存在しない銘柄を含む口座で起動 | クラッシュせず `Unavailable` として継続する |
 | S5 | インジケーター削除 | チャートに `GMD_` オブジェクトが残らない |
+| S6 | アノマリーの発火 | 該当規則名と合計点がログに出る。0件の日は `Anomaly   0` と表示される |
 
 **S4とS5だけは絶対に省略しない。** この2つが、後から最も直しにくい不具合の発生源である。
 
@@ -2079,6 +2484,7 @@ GMDは発注を行わない表示専用インジケーターである。した�
 | `MR` | MarketRegime | 301-399 |
 | `CF` | Confidence | 401-499 |
 | `BP` | BestPair | 501-599 |
+| `AN` | Anomaly | 701-799 |
 | `DP` | Display | 601-699 |
 | `SY` | System / Core | 901-999 |
 
@@ -2095,6 +2501,8 @@ GMDは発注を行わない表示専用インジケーターである。した�
 | `CF-401` | 全エンジン欠損により算出不可 | WARN |
 | `BP-501` | 正順・逆順ともに銘柄が存在しない | INFO |
 | `BP-502` | 点差不足のため推奨を見送り | INFO |
+| `AN-701` | 規則表が上限に達した | WARN |
+| `AN-702` | 未知のアノマリーcodeを指定 | WARN |
 | `DP-601` | オブジェクト作成失敗 | ERROR |
 | `SY-901` | メモリ確保失敗 | FATAL |
 
@@ -2229,6 +2637,9 @@ g_logger.Debug(StringFormat("CurrencyStrength: %.2f ms", elapsed / 1000.0));
 | L9 | Ver2.11では起動のたびに全銘柄を再検出する | L2キャッシュ（CSV永続化）が未実装（26.0） | 起動が0.3〜0.5秒遅いだけ。稼働中はL1で解決済み | Ver2.20 |
 | L10 | Ver2.11ではPENDINGの自動再試行を行わない | Retry未実装（26.0） | 手動Refreshで再検出 | Ver2.20 |
 | L11 | Ver2.11の検出対象は8資産 + FX28ペアのみ | 消費するエンジンがVer2.20のため | — | Ver2.20 |
+| L12 | アノマリーの点数と星は統計検証していない | 公開研究と経験則に基づく初期値（10.11.1） | 「仮の重み」として扱う。`SetSeasonScore()` と `SetRuleEnabled()` で上書き可能 | Ver3.00で実データ検証 |
+| L13 | 五十日の月をまたぐ営業日繰り上げは未対応 | 月末が日曜で決済が前月末金曜になる場合を扱っていない | 該当は年数回。判定の複雑さに対して効果が小さい | Ver2.20 |
+| L14 | 経済指標系アノマリー（FOMC前・CPI前・雇用統計前・連休前）は未実装 | `CalendarValueHistory()` がブローカー依存で使えない環境がある | 規則表に登録済み。`implemented` を立てるだけで有効化できる | Ver2.20 |
 
 ---
 
