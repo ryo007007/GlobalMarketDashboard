@@ -11,6 +11,12 @@
 //|    Asset Detection → Currency Strength → Best Pair → Confidence   |
 //|    → Dashboard                                                     |
 //|  Money Flow / Market Regime は枠だけ用意してある（Ver2.20）。      |
+//|                                                                    |
+//|  【設計方針】この .mq5 は結線だけを持つ。                          |
+//|    OnInit  → 各 Engine / Dashboard の初期化                        |
+//|    OnTimer → CalcAll() → UpdateDisplay() → AdaptiveTimer           |
+//|    計算ロジック・描画ロジックはすべて Modules/ 側の .mqh に置く。  |
+//|    ここに if やスコア計算を増やさないこと。                        |
 //+------------------------------------------------------------------+
 #property copyright "GMD Project"
 #property link      "https://github.com/"

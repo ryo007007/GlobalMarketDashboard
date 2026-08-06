@@ -21,7 +21,7 @@
 | Session Clock | ✅ | 現地時刻・地域別夏時間 |
 | Dashboard | ✅ | 1枚パネル統括 |
 | Display 分割パネル | 🟡 骨格 | Summary / Ranking / MoneyFlow / StatusBar / ChartOverlay |
-| 単体テスト群 | ✅ | tests/ 配下 |
+| 単体テスト群 | ✅ | Engine 1:1 対応（BestPair / Alert / MarketState / Correlation / Statistics 追加） |
 
 ---
 

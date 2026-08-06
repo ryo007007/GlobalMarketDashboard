@@ -1,5 +1,27 @@
 # Changelog
 
+## Test Coverage & Docs (2026-08-06)
+
+### tests（Engine 1:1 対応）
+
+- `Test_BestPair.mq5` 追加（実在銘柄・inverted・点差）
+- `Test_AlertEngine.mq5` 追加（[2.30] プレースホルダ）
+- `Test_MarketState.mq5` 追加（[2.30] プレースホルダ）
+- `Test_CorrelationEngine.mq5` 追加（[3.00] プレースホルダ）
+- `Test_StatisticsEngine.mq5` 追加（[3.00] プレースホルダ）
+
+### docs
+
+- `docs/EngineIndex.md` 追加（Engine ↔ Test 対応表）
+- README のテスト一覧を全エンジン対応に更新
+
+### 方針の再確認
+
+- `MarketDashboard_Ultimate.mq5` は結線のみ。計算はすべて Engine 側
+- 未実装 Engine のテストは「落ちない・IsReady=false」を確認するだけ
+
+---
+
 ## Structural Improvements (2026-08-06)
 
 ### Display 分割

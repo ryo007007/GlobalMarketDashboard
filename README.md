@@ -102,7 +102,8 @@ GlobalMarketDashboard/
 | ファイル | 確認内容 |
 |----------|----------|
 | `Test_AssetDetection.mq5` | 8アセットと28ペアの検出結果 |
-| `Test_CurrencyStrength.mq5` | ランキング・矢印・Best Pair・処理時間 |
+| `Test_CurrencyStrength.mq5` | ランキング・矢印・処理時間 |
+| `Test_BestPair.mq5` | 推奨ペアが実在銘柄か・方向解釈 |
 | `Test_Confidence.mq5` | 値域・未計算時の扱い |
 | `Test_AnomalyEngine.mq5` | 日付規則・季節性・scope 分離 |
 | `Test_SessionClock.mq5` | 欧州/米国/豪州の夏時間境界 |
@@ -110,6 +111,12 @@ GlobalMarketDashboard/
 | `Test_EnergyEngine.mq5` | 圧縮状態・材料不足時の扱い |
 | `Test_MoneyFlow.mq5` | Ver2.20 枠の確認 |
 | `Test_MarketRegime.mq5` | Ver2.20 枠の確認 |
+| `Test_MarketState.mq5` | Ver2.30 枠の確認 |
+| `Test_AlertEngine.mq5` | Ver2.30 枠の確認 |
+| `Test_CorrelationEngine.mq5` | Ver3.00 予約枠の確認 |
+| `Test_StatisticsEngine.mq5` | Ver3.00 予約枠の確認 |
+
+エンジンとテストの対応表は [`docs/EngineIndex.md`](docs/EngineIndex.md) を参照。
 
 ---
 
