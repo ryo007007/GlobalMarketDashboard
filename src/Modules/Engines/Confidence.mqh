@@ -16,18 +16,25 @@
 
 #include "../Core/Types.mqh"
 #include "../Core/Logger.mqh"
+#include "../Core/Utils.mqh"
 #include "CurrencyStrength.mqh"
+#include "AnomalyEngine.mqh"
 
 //+------------------------------------------------------------------+
 class CConfidence : public IEngine
   {
 private:
    CCurrencyStrength *m_cs;
+   CAnomalyEngine    *m_anomaly;        // 任意。NULLでも動く
    CLogger           *m_log;
 
-   double            m_confidence;      // 0〜100
+   double            m_base;            // データ品質だけの信頼度
+   double            m_confidence;      // 0〜100（調整後）
    double            m_spreadPart;      // 内訳：強弱の明確さ
    double            m_dataPart;        // 内訳：データ充足率
+   int               m_anomalyAdj;      // 内訳：アノマリー調整
+   bool              m_useAnomaly;      // アノマリーを信頼度に反映するか
+   ENUM_ANOMALY_SCOPE m_scope;          // どの範囲のアノマリーを使うか
    bool              m_available;       // 算出できたか
    bool              m_ready;
 
@@ -37,14 +44,22 @@ public:
 
    bool              Init(CCurrencyStrength *cs, CLogger *logger);
 
+   //--- アノマリーの接続（任意）
+   //    useAnomaly=false なら、参照だけして信頼度の値は変えない
+   void              SetAnomaly(CAnomalyEngine *anomaly,
+                                const bool useAnomaly = false,
+                                const ENUM_ANOMALY_SCOPE scope = SCOPE_FX);
+
    //--- IEngine
    bool              Calculate(void);
    bool              IsReady(void) { return(m_ready); }
    string            GetName(void) { return("Confidence"); }
 
    //--- 参照
-   double                GetConfidence(void) { return(m_confidence); }
-   bool                  IsAvailable(void)   { return(m_available);  }
+   double                GetConfidence(void)     { return(m_confidence); }
+   double                GetBaseConfidence(void) { return(m_base);       }
+   int                   GetAnomalyAdj(void)     { return(m_anomalyAdj); }
+   bool                  IsAvailable(void)       { return(m_available);  }
    ENUM_CONFIDENCE_LEVEL GetLevel(void);
    string                GetLevelText(void);
    string                GetDisplayText(void);
@@ -54,13 +69,28 @@ public:
 
 //+------------------------------------------------------------------+
 CConfidence::CConfidence(void) : m_cs(NULL),
+                                 m_anomaly(NULL),
                                  m_log(NULL),
+                                 m_base(0.0),
                                  m_confidence(0.0),
                                  m_spreadPart(0.0),
                                  m_dataPart(0.0),
+                                 m_anomalyAdj(0),
+                                 m_useAnomaly(false),
+                                 m_scope(SCOPE_FX),
                                  m_available(false),
                                  m_ready(false)
   {
+  }
+
+//+------------------------------------------------------------------+
+void CConfidence::SetAnomaly(CAnomalyEngine *anomaly,
+                             const bool useAnomaly,
+                             const ENUM_ANOMALY_SCOPE scope)
+  {
+   m_anomaly    = anomaly;
+   m_useAnomaly = useAnomaly;
+   m_scope      = scope;
   }
 
 //+------------------------------------------------------------------+
@@ -95,6 +125,8 @@ bool CConfidence::Calculate(void)
    m_ready      = false;
    m_available  = false;
    m_confidence = 0.0;
+   m_base       = 0.0;
+   m_anomalyAdj = 0;
 
    if(m_cs == NULL)
       return(false);
@@ -117,13 +149,25 @@ bool CConfidence::Calculate(void)
    if(m_dataPart > 100.0)
       m_dataPart = 100.0;
 
-   m_confidence = m_spreadPart * (m_dataPart / 100.0);
+   m_base       = m_spreadPart * (m_dataPart / 100.0);
+   m_confidence = m_base;
+
+   //--- アノマリー調整
+   //    参照は常にするが、値を動かすのは m_useAnomaly が true のときだけ。
+   //    既定で切ってある理由は 8.4 に書いたとおり、
+   //    「この表示を信じてよいか」と「今日は上がりやすいか」は
+   //    別の問いだから。混ぜると、低い数値の原因が分からなくなる。
+   if(m_anomaly != NULL && m_anomaly.IsReady())
+     {
+      m_anomalyAdj = m_anomaly.GetScore(m_scope);
+
+      if(m_useAnomaly)
+         m_confidence += (double)m_anomalyAdj;
+     }
 
    //--- 0〜100 にクリップ
-   if(m_confidence < 0.0)
-      m_confidence = 0.0;
-   if(m_confidence > 100.0)
-      m_confidence = 100.0;
+   m_base       = CalcClamp(m_base,       0.0, 100.0);
+   m_confidence = CalcClamp(m_confidence, 0.0, 100.0);
 
    m_available = true;
    m_ready     = true;
@@ -159,6 +203,14 @@ string CConfidence::GetDisplayText(void)
    if(!m_available)
       return("Confidence  --");
 
+   //--- アノマリーを反映しているときは、内訳を必ず見せる。
+   //    94% とだけ出すと、なぜ94なのか後から説明できない
+   if(m_useAnomaly && m_anomalyAdj != 0)
+      return(StringFormat("Confidence  %d%%  (%d %s)",
+                          (int)MathRound(m_confidence),
+                          (int)MathRound(m_base),
+                          CalcSignedText(m_anomalyAdj)));
+
    return(StringFormat("Confidence  %d%%  (FX only)", (int)MathRound(m_confidence)));
   }
 
@@ -168,8 +220,10 @@ string CConfidence::GetBreakdownText(void)
    if(!m_available)
       return("no input available");
 
-   return(StringFormat("spread part %.1f / data part %.1f%%",
-                       m_spreadPart, m_dataPart));
+   return(StringFormat("spread part %.1f / data part %.1f%% / base %.1f / anomaly %s%s",
+                       m_spreadPart, m_dataPart, m_base,
+                       CalcSignedText(m_anomalyAdj),
+                       (m_useAnomaly ? "" : " (not applied)")));
   }
 
 //+------------------------------------------------------------------+

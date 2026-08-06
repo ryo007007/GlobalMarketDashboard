@@ -19,12 +19,22 @@ Initial Repository
 - `CurrencyStrength.mqh` 追加。8通貨28ペアを直近N本で重み付け集計
 - `BestPair.mqh` 追加。最強×最弱から推奨ペアと方向を1つ提案
 - `Confidence.mqh` 追加。Ver2.11 暫定式で信頼度を0〜100%表示
+- `AnomalyEngine.mqh` 追加。暦から決まる統計的な偏りを点数化する独立エンジン
+  - 規則表方式。18規則を登録（実装13 / Ver2.20予約5）
+  - `scope` で資産を分離。Sell in May を通貨ペアに加算しない
+  - 五十日は東京時間で判定し、8:00〜10:30 の仲値前後のみ有効
+  - 月別 Market Season Score（Bull / Neutral / Bear）
+  - 合計は ±15 で打ち止め。星4未満の規則は既定で無効
+  - 既定では Confidence の数値に加算せず、別行で並べて表示
+  - リスク志向バイアス（`GetRiskBiasScore()`）を追加。株の季節性から
+    「リスクを取りやすい季節か」だけを導く。株スコアの1/2・上限±5で、
+    通貨ペアのスコアには加算しない。Ver2.20の MarketRegime が入力として読む
 - `MoneyFlow.mqh` / `MarketRegime.mqh` は枠のみ（Ver2.20で実装）
 
 ### Display
 
 - `DrawObjects.mqh` 追加。オブジェクトの生成・差分更新・一括削除
-- `Dashboard.mqh` 追加。ランキング8行 + Best Pair + Confidence の1枚パネル
+- `Dashboard.mqh` 追加。ランキング8行 + Best Pair + Confidence + Anomaly の1枚パネル
 
 ### Main
 

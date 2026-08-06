@@ -23,6 +23,11 @@
 #define GMD_FX_PAIR_MAX      28          // 8C2 = 28ペア
 #define GMD_CURRENCY_COUNT   8           // USD/EUR/GBP/JPY/AUD/CAD/CHF/NZD
 #define GMD_CANDIDATE_MAX    12          // 1アセットあたりの候補名の最大数
+#define GMD_ANOMALY_MAX      24          // 登録できるアノマリー規則の上限
+#define GMD_ANOMALY_CAP      15          // 合計加点の上限（±）。積み上げの暴走防止
+#define GMD_RISK_BIAS_CAP     5          // 季節性から導くリスク志向バイアスの上限（±）
+                                         //  株の季節性→リスク志向は二次推論のため
+                                         //  アノマリー本体より狭い範囲に抑える
 
 //+------------------------------------------------------------------+
 //| 通貨インデックス                                                  |
@@ -129,6 +134,45 @@ enum ENUM_TRADE_DIRECTION          // [2.11] Best Pair Engine
   };
 
 //+------------------------------------------------------------------+
+//| アノマリーの適用範囲                            [2.11] Anomaly    |
+//|  Sell in May は株の話で、通貨強弱に足してはいけない。            |
+//|  どの資産に効く話なのかを規則自身に持たせて、混ぜないようにする。 |
+//+------------------------------------------------------------------+
+enum ENUM_ANOMALY_SCOPE
+  {
+   SCOPE_NONE   = 0,
+   SCOPE_FX     = 1,        // 通貨ペア全般
+   SCOPE_JPY    = 2,        // 円が絡むペアのみ（五十日など）
+   SCOPE_EQUITY = 3,        // 株価指数
+   SCOPE_BOND   = 4,        // 債券
+   SCOPE_METAL  = 5,        // 金・銀
+   SCOPE_CRYPTO = 6         // 暗号資産
+  };
+
+//+------------------------------------------------------------------+
+//| 季節性の状態                                    [2.11] Anomaly    |
+//+------------------------------------------------------------------+
+enum ENUM_SEASON_STATE
+  {
+   SEASON_BEAR    = -1,
+   SEASON_NEUTRAL =  0,
+   SEASON_BULL    =  1
+  };
+
+//+------------------------------------------------------------------+
+//| リスク志向バイアス                              [2.11] Anomaly    |
+//|  株の季節性から「リスクを取りやすい季節か」だけを導く。          |
+//|  どの通貨が買われるかは言わない。それは価格を読む               |
+//|  CurrencyStrength の担当である（仕様書10.13）。                  |
+//+------------------------------------------------------------------+
+enum ENUM_RISK_BIAS
+  {
+   RISK_BIAS_OFF  = -1,
+   RISK_BIAS_FLAT =  0,
+   RISK_BIAS_ON   =  1
+  };
+
+//+------------------------------------------------------------------+
 //| システム                                                          |
 //+------------------------------------------------------------------+
 enum ENUM_LOG_LEVEL
@@ -176,6 +220,33 @@ struct SFxPair
    string              symbol;         // 実際の銘柄名
    bool                inverted;       // 逆順で見つかった場合 true
    bool                available;      // 使用可能か
+  };
+
+//+------------------------------------------------------------------+
+//| アノマリー規則の1件                             [2.11] Anomaly    |
+//|  規則は「表」として持つ。判定を if の羅列で書くと、               |
+//|  1つ足すたびに関数が伸びて、どこを触ればよいか分からなくなる。    |
+//+------------------------------------------------------------------+
+struct SAnomalyRule
+  {
+   string              code;           // 識別子 "GOTOBI" など
+   string              label;          // 表示名 "五十日"
+   ENUM_ANOMALY_SCOPE  scope;          // どの資産に効く話か
+   int                 score;          // 該当時の加点（符号付き）
+   int                 stars;          // 根拠の強さ 1〜5（表示と選別用）
+   bool                enabled;        // 個別ON/OFF
+   bool                implemented;    // false = [2.20]以降の予約
+  };
+
+//+------------------------------------------------------------------+
+//| 判定結果1件                                     [2.11] Anomaly    |
+//+------------------------------------------------------------------+
+struct SAnomalyHit
+  {
+   string              code;
+   string              label;
+   int                 score;
+   ENUM_ANOMALY_SCOPE  scope;
   };
 
 //+------------------------------------------------------------------+
@@ -231,6 +302,40 @@ string CurrencyToString(const ENUM_CURRENCY cur)
       case CUR_CHF: return("CHF");
       case CUR_NZD: return("NZD");
       default:      return("???");
+     }
+  }
+
+string AnomalyScopeToString(const ENUM_ANOMALY_SCOPE scope)
+  {
+   switch(scope)
+     {
+      case SCOPE_FX:     return("FX");
+      case SCOPE_JPY:    return("JPY");
+      case SCOPE_EQUITY: return("Equity");
+      case SCOPE_BOND:   return("Bond");
+      case SCOPE_METAL:  return("Metal");
+      case SCOPE_CRYPTO: return("Crypto");
+      default:           return("None");
+     }
+  }
+
+string SeasonStateToString(const ENUM_SEASON_STATE s)
+  {
+   switch(s)
+     {
+      case SEASON_BULL: return("Bull");
+      case SEASON_BEAR: return("Bear");
+      default:          return("Neutral");
+     }
+  }
+
+string RiskBiasToString(const ENUM_RISK_BIAS b)
+  {
+   switch(b)
+     {
+      case RISK_BIAS_ON:  return("risk-on bias");
+      case RISK_BIAS_OFF: return("risk-off bias");
+      default:            return("no bias");
      }
   }
 

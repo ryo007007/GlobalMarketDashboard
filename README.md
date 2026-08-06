@@ -71,6 +71,7 @@ GlobalMarketDashboard/
 │   │   │   ├── CurrencyStrength.mqh   [2.11]
 │   │   │   ├── BestPair.mqh           [2.11]
 │   │   │   ├── Confidence.mqh         [2.11]
+│   │   │   ├── AnomalyEngine.mqh      [2.11] 暦のアノマリー
 │   │   │   ├── MoneyFlow.mqh          [2.20] 枠のみ
 │   │   │   └── MarketRegime.mqh       [2.20] 枠のみ
 │   │   │
@@ -85,6 +86,7 @@ GlobalMarketDashboard/
 │   ├── Test_AssetDetection.mq5
 │   ├── Test_CurrencyStrength.mq5
 │   ├── Test_Confidence.mq5
+│   ├── Test_AnomalyEngine.mq5
 │   ├── Test_MoneyFlow.mq5          [2.20] 枠の確認のみ
 │   └── Test_MarketRegime.mq5       [2.20] 枠の確認のみ
 │
@@ -117,3 +119,4 @@ GlobalMarketDashboard/
 | `Test_AssetDetection.mq5` | 接尾辞の検出、8アセットと28ペアの検証結果 |
 | `Test_CurrencyStrength.mq5` | 通貨強弱のランキング、矢印、Best Pair、処理時間 |
 | `Test_Confidence.mq5` | 信頼度の値域と、算出できないときの扱い |
+| `Test_AnomalyEngine.mq5` | 特定の日付を与えたときに期待した規則が発火するか。季節性がFXスコアに混入しないか |

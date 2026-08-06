@@ -32,6 +32,7 @@
 #include "Modules/Engines/CurrencyStrength.mqh"
 #include "Modules/Engines/BestPair.mqh"
 #include "Modules/Engines/Confidence.mqh"
+#include "Modules/Engines/AnomalyEngine.mqh"
 #include "Modules/Engines/MoneyFlow.mqh"
 #include "Modules/Engines/MarketRegime.mqh"
 
@@ -62,6 +63,13 @@ input bool             Inp_EnableBestPair     = true;        // 推奨ペアを�
 input double           Inp_BestPairMinSpread  = 20.0;        // 方向を出す最低点差
 input bool             Inp_EnableConfidence   = true;        // 信頼度を出す
 
+input group "=== Anomaly ==="
+input bool             Inp_EnableAnomaly      = true;        // アノマリーを評価
+input int              Inp_AnomalyMinStars    = 4;           // この星数未満は使わない
+input int              Inp_ServerGmtOffset    = 3;           // サーバ時刻のGMT差（五十日判定用）
+input bool             Inp_UseSeasonScore     = true;        // 月別季節性を使う
+input bool             Inp_AnomalyToConfidence = false;      // 信頼度に加算する（推奨: false）
+
 input group "=== 更新 ==="
 input int              Inp_UpdateIntervalMs   = 1000;        // 更新間隔（ミリ秒）
 input bool             Inp_UpdateOnNewBarOnly = false;       // 足の確定時だけ更新
@@ -80,6 +88,7 @@ CAssetDetection   g_assets;
 CCurrencyStrength g_strength;
 CBestPair         g_bestPair;
 CConfidence       g_confidence;
+CAnomalyEngine    g_anomaly;
 CMoneyFlow        g_moneyFlow;      // [2.20] 枠のみ
 CMarketRegime     g_marketRegime;   // [2.20] 枠のみ
 
@@ -123,7 +132,18 @@ int OnInit()
    g_bestPair.Init(GetPointer(g_strength), GetPointer(g_assets),
                    GetPointer(g_logger), Inp_BestPairMinSpread);
 
+   //--- アノマリーは価格を見ないので、銘柄検出の結果に依存しない
+   g_anomaly.Init(GetPointer(g_logger),
+                  Inp_ServerGmtOffset,
+                  Inp_AnomalyMinStars,
+                  Inp_UseSeasonScore);
+
    g_confidence.Init(GetPointer(g_strength), GetPointer(g_logger));
+
+   //--- 既定では「参照するが信頼度の値は変えない」
+   g_confidence.SetAnomaly(GetPointer(g_anomaly),
+                           Inp_AnomalyToConfidence,
+                           (StringFind(_Symbol, "JPY") >= 0 ? SCOPE_JPY : SCOPE_FX));
 
    g_moneyFlow.Init(GetPointer(g_assets), GetPointer(g_logger));
    g_marketRegime.Init(GetPointer(g_assets), GetPointer(g_logger));
@@ -135,6 +155,9 @@ int OnInit()
                        GetPointer(g_bestPair),
                        GetPointer(g_confidence),
                        GetPointer(g_logger));
+
+      if(Inp_EnableAnomaly)
+         g_dashboard.SetAnomaly(GetPointer(g_anomaly));
 
       g_dashboard.SetLayout(Inp_PanelX, Inp_PanelY, Inp_FontSize, Inp_PanelCorner);
       g_dashboard.Build();
@@ -227,7 +250,10 @@ void OnChartEvent(const int id,
 //+------------------------------------------------------------------+
 //| 全エンジンを固定順で計算する（仕様書30.2）                        |
 //|  順序は依存関係で決まっている。入れ替えてはいけない。             |
-//|    Strength → BestPair → Confidence                              |
+//|    Strength → Anomaly → BestPair → Confidence                    |
+//|                                                                   |
+//|  Anomaly を Confidence より先に置くのは、Confidence が            |
+//|  Anomaly の結果を参照するから。逆にすると 1回分古い値を使う。    |
 //+------------------------------------------------------------------+
 void CalcAll()
   {
@@ -235,6 +261,9 @@ void CalcAll()
 
    if(Inp_EnableStrength)
       g_strength.Calculate();
+
+   if(Inp_EnableAnomaly)
+      g_anomaly.Calculate();
 
    if(Inp_EnableBestPair)
       g_bestPair.Calculate();

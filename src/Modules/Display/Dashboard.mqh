@@ -36,6 +36,7 @@
 #include "../Engines/CurrencyStrength.mqh"
 #include "../Engines/BestPair.mqh"
 #include "../Engines/Confidence.mqh"
+#include "../Engines/AnomalyEngine.mqh"
 
 //+------------------------------------------------------------------+
 class CDashboard
@@ -44,6 +45,7 @@ private:
    CCurrencyStrength *m_cs;
    CBestPair         *m_bestPair;
    CConfidence       *m_confidence;
+   CAnomalyEngine    *m_anomaly;        // 任意。NULLなら行を出さない
    CLogger           *m_log;
 
    //--- レイアウト
@@ -79,6 +81,8 @@ public:
                           CConfidence *confidence,
                           CLogger *logger);
 
+   void              SetAnomaly(CAnomalyEngine *anomaly) { m_anomaly = anomaly; }
+
    void              SetLayout(const int x, const int y,
                                const int fontSize = 9,
                                const ENUM_BASE_CORNER corner = CORNER_LEFT_UPPER);
@@ -95,6 +99,7 @@ public:
 CDashboard::CDashboard(void) : m_cs(NULL),
                                m_bestPair(NULL),
                                m_confidence(NULL),
+                               m_anomaly(NULL),
                                m_log(NULL),
                                m_x(20),
                                m_y(30),
@@ -172,9 +177,11 @@ bool CDashboard::Build(void)
    //   10       : 区切り
    //   11       : Best Pair
    //   12       : Confidence
-   //   13       : Regime（Ver2.20の枠）
-   //   14       : フッター
-   const int totalRows   = 15;
+   //   13       : Anomaly
+   //   14       : Season（リスク志向バイアス）
+   //   15       : Regime（Ver2.20の枠）
+   //   16       : フッター
+   const int totalRows   = 17;
    const int panelHeight = 16 + totalRows * m_rowHeight;
 
    DrawPanel(CalcObjectName("Panel"), m_x, m_y,
@@ -202,10 +209,16 @@ bool CDashboard::Build(void)
    DrawLabel(CalcObjectName("Confidence"), tx, RowY(12),
              "Confidence  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Regime"), tx, RowY(13),
+   DrawLabel(CalcObjectName("Anomaly"), tx, RowY(13),
+             "Anomaly  --", clrGray, m_fontSize, m_font, m_corner);
+
+   DrawLabel(CalcObjectName("Season"), tx, RowY(14),
+             "Season  --", clrGray, m_fontSize, m_font, m_corner);
+
+   DrawLabel(CalcObjectName("Regime"), tx, RowY(15),
              "Regime  --  [2.20]", m_subColor, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Footer"), tx, RowY(14),
+   DrawLabel(CalcObjectName("Footer"), tx, RowY(16),
              BuildFooterText(), m_subColor, m_fontSize - 1, m_font, m_corner);
 
    m_built = true;
@@ -254,6 +267,38 @@ bool CDashboard::Update(void)
       if(UpdateLabel(CalcObjectName("Confidence"),
                      m_confidence.GetDisplayText(),
                      m_confidence.GetColor()))
+         changed++;
+     }
+
+   //--- Anomaly
+   //    円のペアを見ているときは五十日を含める。
+   //    それ以外のペアに五十日を足してはいけない
+   if(m_anomaly != NULL)
+     {
+      const ENUM_ANOMALY_SCOPE scope =
+         (StringFind(_Symbol, "JPY") >= 0 ? SCOPE_JPY : SCOPE_FX);
+
+      if(UpdateLabel(CalcObjectName("Anomaly"),
+                     m_anomaly.GetDisplayText(scope),
+                     m_anomaly.GetColor(scope)))
+         changed++;
+
+      //--- Season（リスク志向バイアス）
+      //    株の季節性から導いた「リスクを取りやすい季節か」。
+      //    通貨ペアのスコアには足さず、文脈として別行に出す。
+      //    どの通貨が買われるかは上のランキングを見れば分かる
+      color seasonColor = m_subColor;
+      const ENUM_RISK_BIAS bias = m_anomaly.GetRiskBias();
+
+      if(bias == RISK_BIAS_ON)
+         seasonColor = clrRed;
+      else
+         if(bias == RISK_BIAS_OFF)
+            seasonColor = clrDodgerBlue;
+
+      if(UpdateLabel(CalcObjectName("Season"),
+                     m_anomaly.GetRiskBiasText(),
+                     seasonColor))
          changed++;
      }
 
