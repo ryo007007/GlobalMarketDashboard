@@ -36,6 +36,7 @@ Engines
    ├─ MarketState      : [2.30]
    ├─ AlertEngine      : [2.30]
    ├─ PriceLevelEngine : [2.20+] 重要価格帯
+   ├─ PivotEngine      : [2.20+] ピボット（Weekly 優先）
    ├─ CorrelationEngine: [3.00] 予約
    └─ StatisticsEngine : [3.00] 予約
    │
@@ -89,6 +90,7 @@ AssetDetection
 - `MarketState.mqh` `[2.30]`
 - `AlertEngine.mqh` `[2.30]`
 - `PriceLevelEngine.mqh` `[2.20+]`
+- `PivotEngine.mqh` `[2.20+]`
 - `CorrelationEngine.mqh` `[3.00]`
 - `StatisticsEngine.mqh` `[3.00]`
 
@@ -169,6 +171,7 @@ Ver2.11 時点では描画ロジックの多くが `Dashboard.mqh` に集約さ�
 
 ### 6.6 将来 Engine の予約席
 - `PriceLevelEngine.mqh` `[2.20+]`
+- `PivotEngine.mqh` `[2.20+]`
 - `CorrelationEngine.mqh` `[3.00]`
 - `StatisticsEngine.mqh` `[3.00]`
 

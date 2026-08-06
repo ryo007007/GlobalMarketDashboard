@@ -30,6 +30,7 @@
 | モジュール | 内容 |
 |------------|------|
 | **Price Level Engine** | 日/週/月の高安・距離・接近色・Dashboard 行 |
+| **Pivot Engine** | Daily/Weekly/Monthly/Yearly Pivot。Weekly 優先。Nearest 統合 |
 | Money Flow | 株・貴金属・暗号・債券の資金流出入判定 |
 | Market Regime | Risk ON / OFF / Neutral の合成スコア |
 | Symbol Cache (L2) | CSV 永続化キャッシュ |

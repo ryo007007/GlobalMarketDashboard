@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.7 Draft** |
+| Document Version | Project Specification **v1.8 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -48,7 +48,7 @@
 **Part VII — 制御・状態・通知（Ver2.11〜2.30）**
 36. Adaptive Update Engine　37. Energy Engine
 38. Market State Engine [2.30]　39. Alert Engine [2.30]
-40. Price Level Engine [2.20+]
+40. Price Level Engine [2.20+]　41. Pivot Engine [2.20+]
 
 **付録**
 A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
@@ -263,6 +263,7 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 | Market State Engine `[2.30]` | 上記を1つの「現在の市場状態」に畳む |
 | Alert Engine `[2.30]` | 条件が成立した瞬間に1回だけ知らせる |
 | Price Level Engine `[2.20+]` | 重要価格帯（日/週/月の高安）と現在価格の距離を数値化し、接近・ブレイク監視する |
+| Pivot Engine `[2.20+]` | Daily/Weekly/Monthly/Yearly の Pivot（PP・R1〜R3・S1〜S3）を計算し距離と接近を出す。**Weekly を優先表示** |
 
 Energy と Adaptive Update は厳密には分析エンジンではない。Energy は方向を出さず、Adaptive Update は市場を判定しない。だが `IEngine` の呼び出し規約に揃えておくほうが本体が単純になるため、同じ場所に置いている。
 
@@ -3674,6 +3675,8 @@ struct SPriceLevel
 
 ### 40.5 Display
 
+> **統合表示**：Pivot Engine（41章）導入後は、高安と Pivot を **Nearest Important Levels** として距離順にまとめて表示する（41.6.2）。
+
 コンパクト表示（ダッシュボード右下イメージ）:
 
 ```
@@ -3753,6 +3756,199 @@ public:
 | Ver2.11 | 仕様確定・骨格（本ファイル）のみ。成功基準外 |
 | Ver2.20 | レベル取得・距離・色・Dashboard 行 |
 | Ver2.30 | AlertEngine 連携（接近エッジ）・Watch フラグと Strength/Energy の合成表示 |
+
+---
+
+
+## 41. Pivot Engine [2.20+]（ピボット）
+
+> **実装フェーズ**：設計は Ver2.11 時点で固める。本実装は Ver2.20 以降。  
+> Ver2.11 の成功基準には含めない。Price Level（40章）と対になる「計算された節目」側のエンジンである。
+
+### 41.1 Purpose
+
+標準的な Pivot Point（フロアピボット）を複数時間軸で計算し、現在価格との距離を数値化する。  
+Price Level が「過去の実体レンジの端」（高安）を扱うのに対し、Pivot は「前日・前週などのレンジから導いた計算上の節目」を扱う。
+
+あなたが重視する **Weekly Pivot を最優先で表示**する。
+
+### 41.2 対象時間軸
+
+| 軸 | 用途 | 表示優先度 |
+|---|---|---|
+| Daily | デイトレの目安 | 中 |
+| **Weekly** | **メイン。ダッシュボードで最も目立たせる** | **最高** |
+| Monthly | スイング | 中 |
+| Yearly | 長期の大きな節目 | 低（既定OFF可） |
+
+各軸について次を算出する。
+
+```
+PP, R1, R2, R3, S1, S2, S3
+```
+
+### 41.3 Calculation（フロアピボット既定）
+
+基準バー（例: 前週の確定週足、または前週の日足集計）の High / Low / Close を H, L, C とする。
+
+```
+PP  = (H + L + C) / 3
+R1  = 2*PP - L
+S1  = 2*PP - H
+R2  = PP + (H - L)
+S2  = PP - (H - L)
+R3  = H + 2*(PP - L)
+S3  = L - 2*(H - PP)
+```
+
+- **Weekly**：前週の H/L/C（日足7本集計でも週足1本でも可。ブローカーに週足が無い場合は日足集計）
+- **Daily**：前日の確定日足
+- **Monthly / Yearly**：同様に前期間の H/L/C
+- 公式の差し替え（Woodie / Camarilla 等）は Future Expansion。Ver2.20 はフロアのみ
+
+距離は Price Level と同じく pips 換算（Utils 集約）。
+
+### 41.4 接近色・ブレイク
+
+Price Level（40.3.3）と同じ閾値体系を共有してよい。
+
+| 距離 | 色 |
+|---|---|
+| ≥ 50 pips | 白 |
+| ≤ 20 | 黄 |
+| ≤ 10 | 橙 |
+| ≤ 5  | 赤 |
+
+**ブレイク判定（概念）**
+
+- 終値（または Bid）が R1/R2/… を上抜け → 上方向ブレイク候補
+- S1/S2/… を下抜け → 下方向ブレイク候補
+- 判定は「今の足の状態」ではなく、必要なら確定足ベースのエッジを AlertEngine に渡す（39章）
+
+### 41.5 Output
+
+```cpp
+struct SPivotLevel
+  {
+   string axis;     // "D","W","M","Y"
+   string name;     // "PP","R1","R2","R3","S1","S2","S3"
+   double price;
+   double distancePips;
+   int    side;     // +1 resistance側, -1 support側, 0=PP
+   color  proximityColor;
+  };
+```
+
+| 項目 | 説明 |
+|---|---|
+| Levels[] | 有効軸×7本 |
+| NearestPivot | 最も近い1本（Weekly を同距離なら優先） |
+| Watch 文脈 | Strength / Energy と連携する表示用フラグ（断言しない） |
+
+### 41.6 Display
+
+#### 41.6.1 Weekly を主表示
+
+```
+Weekly Pivot
+  R2  ★★★★   あと 8pips
+  R1
+  PP  ← price
+  S1
+```
+
+またはコンパクト:
+
+```
+W-R2 +8
+W-PP 14
+W-S1 22
+```
+
+#### 41.6.2 Nearest Important Levels（Price Level と統合）
+
+40章の高安と本エンジンの Pivot を**一つのランキング**にまとめる。
+
+```
+Nearest Important Levels
+① Weekly Pivot R1   6 pips
+② Weekly High      12 pips
+③ Yesterday High   15 pips
+④ Monthly Pivot PP 21 pips
+```
+
+実装方針:
+
+- 集約は Display 側（例: `SummaryPanel` / 専用1行）または薄い `CLevelBook` ヘルパ
+- PivotEngine と PriceLevelEngine は**互いを直接呼ばない**（両方の結果を Dashboard が読む）
+- ソートキーは `distancePips` 昇順。同値なら Weekly Pivot > Weekly High/Low > Daily > その他
+
+### 41.7 他エンジン連携
+
+| 組み合わせ | 表示の意味（予測の断言はしない） |
+|---|---|
+| 最強通貨ペア × Weekly R 接近 | Strong Breakout Candidate（文言レベル） |
+| 最弱通貨ペア × Weekly S 接近 | Breakdown Candidate |
+| Energy LOADED/RELEASED × Pivot 目前 | 警戒度を上げた表示（確率%は書かない） |
+| Market State `[2.30]` | Pivot 付近滞留 → レンジ文脈 / 明確な突破 → Trend 文脈の材料の一つ |
+
+Confidence への数値加算は既定OFF（Anomaly と同様、文脈表示を優先）。
+
+### 41.8 Class Interface
+
+```cpp
+class CPivotEngine : public IEngine
+  {
+public:
+   bool   Init(CLogger *logger, const string symbol);
+   void   SetAxes(const bool daily, const bool weekly,
+                  const bool monthly, const bool yearly);
+   void   SetAlertThresholds(const int warn20, const int warn10, const int warn5);
+
+   bool   Calculate(void);
+   bool   IsReady(void);
+   string GetName(void);   // "Pivot"
+
+   int    GetLevelCount(void);
+   bool   GetLevel(const int index, SPivotLevel &out);
+   bool   GetNearest(SPivotLevel &out);          // Weekly 優先のタイブレーク
+   string GetDisplayText(void);                  // Weekly 主表示
+   string GetCompactText(void);
+  };
+```
+
+### 41.9 Implementation Notes
+
+1. **Weekly を欠測させない**。週足が無いブローカーでは日足から前週 H/L/C を組み立てる。
+2. **計算はタイマー間隔で十分**。ティック毎に Pivot を再計算しない（PP は確定バー依存が主）。
+3. **Alert は自前で鳴らさない**。接近・ブレイクのエッジだけ `CAlertEngine::Raise` に渡す。
+4. **Yearly は重い・更新が稀**なので既定OFFを推奨。
+5. Price Level と閾値・pip 定義を共有し、色と距離の意味を画面全体で一致させる。
+
+### 41.10 設定項目（追加予定）
+
+| パラメータ | 既定 | 説明 |
+|---|---|---|
+| `Inp_EnablePivot` | true | 機能ON/OFF |
+| `Inp_PivotDaily` | true | Daily |
+| `Inp_PivotWeekly` | true | Weekly（推奨ON） |
+| `Inp_PivotMonthly` | true | Monthly |
+| `Inp_PivotYearly` | false | Yearly |
+| `Inp_PivotWarnPips` | 20,10,5 | 接近色（Price Level と共通化可） |
+
+### 41.11 ロードマップ上の位置
+
+| バージョン | 内容 |
+|---|---|
+| Ver2.11 | 仕様＋骨格のみ |
+| Ver2.20 | Weekly/Daily 計算・距離・色・Dashboard・Nearest 統合 |
+| Ver2.30 | Monthly/Yearly、Alert 連携、Market State 材料 |
+
+### 41.12 Future Expansion
+
+- Woodie / Camarilla / Fibonacci Pivot の切替
+- 複数銘柄の Weekly Pivot 一覧（指数・Gold）
+- チャートへの水平線描画（ChartOverlay）
 
 ---
 

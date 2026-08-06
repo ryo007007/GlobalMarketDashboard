@@ -1,5 +1,26 @@
 # Changelog
 
+## Pivot Engine Spec (2026-08-06)
+
+### Spec
+
+- `docs/ProjectSpecification.md` を **v1.8 Draft** に更新
+- **第41章 Pivot Engine** を新設
+  - Daily / Weekly / Monthly / Yearly（フロアピボット）
+  - **Weekly を最優先表示**
+  - 距離・接近色・ブレイク候補
+  - Price Level と統合した **Nearest Important Levels**
+  - Strength / Energy / Market State との文脈連携（確率表記なし）
+  - Alert は AlertEngine に委譲
+
+### Code / Tests
+
+- `Engines/PivotEngine.mqh` 骨格追加 `[2.20+]`
+- `tests/Test_PivotEngine.mq5` 追加
+- EngineIndex / Architecture / ROADMAP / README を同期
+
+---
+
 ## Price Level Engine Spec (2026-08-06)
 
 ### Spec
