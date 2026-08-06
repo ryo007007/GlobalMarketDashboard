@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : チャートオブジェクトの生成・更新・削除だけを引き受ける    |
 //|  依存 : Types.mqh                                                 |
-//|  仕様 : Project Specification v1.3 第15章・第32.3節               |
+//|  仕様 : Project Specification v1.6 第15章・第32.3節               |
 //|                                                                   |
 //|  原則 : 作り直さない。あれば更新する。                            |
 //|         ObjectDelete → ObjectCreate を毎回繰り返すと、            |

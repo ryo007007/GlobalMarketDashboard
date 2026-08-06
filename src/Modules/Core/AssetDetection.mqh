@@ -5,7 +5,7 @@
 //|  役割 : ブローカーごとに異なる銘柄名を自動検出し、                |
 //|         「この口座で何が使えるか」を確定させる                    |
 //|  依存 : Types.mqh, Logger.mqh                                     |
-//|  仕様 : Project Specification v1.2 第26章                         |
+//|  仕様 : Project Specification v1.6 第26章                         |
 //|                                                                   |
 //|  実装範囲 [2.11] : Detect / Validation / Availability / Refresh   |
 //|                    / L1キャッシュ（メモリ内レジストリ）           |

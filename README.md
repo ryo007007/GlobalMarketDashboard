@@ -1,44 +1,39 @@
 # Global Market Dashboard Ultimate
 
-## Concept
+相場を見るのではなく、**世界のお金の流れを見る。**
 
-相場を見るのではなく
-
-世界のお金の流れを見る。
+Global Market Dashboard Ultimate（GMD）は、MT5上でFX・指数・金属・暗号資産の文脈を横断的に扱うマーケット分析ダッシュボードです。現在の実装重心は **Ver2.11 の土台整備** にあり、銘柄自動検出・通貨強弱・Best Pair・Confidence・Anomaly・Energy・Adaptive Update を中心に開発を進めています。
 
 ---
 
-## Features
+## Current Status
 
-✅ Currency Strength
+### 実装済み / 稼働中（Ver2.11）
+- Asset Detection
+- Currency Strength
+- Best Pair
+- Confidence
+- Anomaly Engine
+- Energy Engine
+- Adaptive Update
+- Session Clock
+- Dashboard
+- 単体テスト用スクリプト群
 
-✅ Best Pair
-
-✅ Confidence
-
-⬜ Money Flow
-
-⬜ Bond
-
-⬜ AI Radar
+### 予約済み / 段階導入
+- Money Flow `[2.20]`
+- Market Regime `[2.20]`
+- Symbol Cache (L2 CSV) `[2.20]`
+- Session Manager `[2.20+]`
+- Market State `[2.30]`
+- Alert Engine `[2.30]`
 
 ---
 
-## Development Roadmap
-
-Ver2.11
-
-Ver2.20
-
-Ver3.00
-
-# GlobalMarketDashboard
-
-## ディレクトリ構造
+## ディレクトリ構成
 
 ```text
 GlobalMarketDashboard/
-│
 ├── README.md
 ├── CHANGELOG.md
 ├── ROADMAP.md
@@ -59,44 +54,46 @@ GlobalMarketDashboard/
 │
 ├── src/
 │   ├── MarketDashboard_Ultimate.mq5
-│   │
-│   ├── Modules/
-│   │   ├── Core/
-│   │   │   ├── Types.mqh              [2.11]
-│   │   │   ├── Logger.mqh             [2.11]
-│   │   │   ├── AssetDetection.mqh     [2.11]
-│   │   │   ├── SessionClock.mqh       [2.11] 現地時刻と夏時間
-│   │   │   └── Utils.mqh              [2.11]
-│   │   │
-│   │   ├── Engines/
-│   │   │   ├── CurrencyStrength.mqh   [2.11]
-│   │   │   ├── BestPair.mqh           [2.11]
-│   │   │   ├── Confidence.mqh         [2.11]
-│   │   │   ├── AnomalyEngine.mqh      [2.11] 暦のアノマリー
-│   │   │   ├── AdaptiveUpdate.mqh     [2.11] 更新間隔の段
-│   │   │   ├── EnergyEngine.mqh       [2.11] 圧縮の蓄積
-│   │   │   ├── MoneyFlow.mqh          [2.20] 枠のみ
-│   │   │   ├── MarketRegime.mqh       [2.20] 枠のみ
-│   │   │   ├── MarketState.mqh        [2.30] 枠のみ
-│   │   │   └── AlertEngine.mqh        [2.30] 枠のみ
-│   │   │
-│   │   └── Display/
-│   │       ├── DrawObjects.mqh        [2.11] 描画の下請け
-│   │       └── Dashboard.mqh          [2.11] レイアウト
-│   │
-│   ├── Include/
-│   └── Archive/
+│   └── Modules/
+│       ├── Interfaces/
+│       │   ├── IEngine.mqh
+│       │   ├── IDashboard.mqh
+│       │   └── IIndicator.mqh
+│       ├── Core/
+│       │   ├── Constants.mqh
+│       │   ├── Config.mqh
+│       │   ├── Types.mqh
+│       │   ├── Logger.mqh
+│       │   ├── Utils.mqh
+│       │   ├── AssetDetection.mqh
+│       │   ├── SymbolCache.mqh      [2.20] 契約のみ
+│       │   ├── SessionClock.mqh
+│       │   └── SessionManager.mqh   [2.20+] 受け皿
+│       ├── Engines/
+│       │   ├── CurrencyStrength.mqh
+│       │   ├── BestPair.mqh
+│       │   ├── Confidence.mqh
+│       │   ├── AnomalyEngine.mqh
+│       │   ├── AdaptiveUpdate.mqh
+│       │   ├── EnergyEngine.mqh
+│       │   ├── MoneyFlow.mqh        [2.20] 枠のみ
+│       │   ├── MarketRegime.mqh     [2.20] 枠のみ
+│       │   ├── MarketState.mqh      [2.30] 枠のみ
+│       │   └── AlertEngine.mqh      [2.30] 枠のみ
+│       └── Display/
+│           ├── DrawObjects.mqh
+│           └── Dashboard.mqh
 │
 ├── tests/
-│   ├── Test_AssetDetection.mq5
-│   ├── Test_CurrencyStrength.mq5
-│   ├── Test_Confidence.mq5
-│   ├── Test_AnomalyEngine.mq5
-│   ├── Test_SessionClock.mq5
 │   ├── Test_AdaptiveUpdate.mq5
+│   ├── Test_AnomalyEngine.mq5
+│   ├── Test_AssetDetection.mq5
+│   ├── Test_Confidence.mq5
+│   ├── Test_CurrencyStrength.mq5
 │   ├── Test_EnergyEngine.mq5
-│   ├── Test_MoneyFlow.mq5          [2.20] 枠の確認のみ
-│   └── Test_MarketRegime.mq5       [2.20] 枠の確認のみ
+│   ├── Test_MarketRegime.mq5
+│   ├── Test_MoneyFlow.mq5
+│   └── Test_SessionClock.mq5
 │
 ├── examples/
 ├── ideas/
@@ -106,33 +103,50 @@ GlobalMarketDashboard/
 
 ---
 
+## 設計上の改善ポイント（今回反映）
+
+- `Interfaces/` を新設し、`IEngine` を型定義から分離
+- `Constants.mqh` を新設し、マジックナンバーを集約
+- `Config.mqh` を新設し、将来の設定統合先を明確化
+- `SymbolCache.mqh` を新設し、AssetDetection のL2キャッシュ境界を分離
+- `SessionManager.mqh` を追加し、`SessionClock` から将来のセッション統括へ拡張しやすい形を確保
+- 仕様書・README・Architecture の記述を現行構成へ同期
+
+---
+
 ## インストール
 
-1. MetaTrader 5 で `ファイル > データフォルダを開く` を選ぶ
-2. `MQL5/Indicators/` に `GlobalMarketDashboard` フォルダごと置く
+1. MetaTrader 5 で `ファイル > データフォルダを開く`
+2. `MQL5/Indicators/` 配下に `GlobalMarketDashboard` フォルダごと配置
 3. MetaEditor で `src/MarketDashboard_Ultimate.mq5` を開き、F7 でコンパイル
 4. ナビゲーターからチャートにドラッグ&ドロップ
 
-インクルードは相対パスで解決しています。フォルダ構造を保ったまま配置してください。
+フォルダ構造を崩すと相対インクルードが解決できないため、そのまま配置してください。
 
 ---
 
 ## テストの動かし方
 
-`tests/` の各ファイルはスクリプトです。MetaEditor でコンパイルし、
-任意のチャートにドラッグすると「エキスパート」タブに結果が出ます。
+`tests/` 配下のファイルはテスト用スクリプトです。MetaEditorでコンパイルし、任意のチャートにドラッグすると「エキスパート」タブへ結果が出ます。
 
 | ファイル | 確認する内容 |
-| --- | --- |
-| `Test_AssetDetection.mq5` | 接尾辞の検出、8アセットと28ペアの検証結果 |
-| `Test_CurrencyStrength.mq5` | 通貨強弱のランキング、矢印、Best Pair、処理時間 |
-| `Test_Confidence.mq5` | 信頼度の値域と、算出できないときの扱い |
-| `Test_AnomalyEngine.mq5` | 特定の日付を与えたときに期待した規則が発火するか。季節性がFXスコアに混入しないか |
-| `Test_SessionClock.mq5` | 欧州と米国の夏時間が別々に切り替わるか。境界日を直接指定して検証する |
-| `Test_AdaptiveUpdate.mq5` | 段が3つに収まるか。速くする方向だけ滞留時間を免除しているか |
-| `Test_EnergyEngine.mq5` | 銘柄をまたいで同じ尺度に収まるか。材料不足で 0 を返していないか |
+|---|---|
+| `Test_AssetDetection.mq5` | 8アセットと28ペアの検出結果、接尾辞推定 |
+| `Test_CurrencyStrength.mq5` | ランキング、矢印、Best Pair、処理時間 |
+| `Test_Confidence.mq5` | 値域、未計算時の扱い |
+| `Test_AnomalyEngine.mq5` | 日付規則・季節性の発火、scope分離 |
+| `Test_SessionClock.mq5` | 欧州/米国/豪州の夏時間境界 |
+| `Test_AdaptiveUpdate.mq5` | 3段制御とヒステリシス |
+| `Test_EnergyEngine.mq5` | 圧縮状態、材料不足時の扱い |
+| `Test_MoneyFlow.mq5` | Ver2.20枠の確認 |
+| `Test_MarketRegime.mq5` | Ver2.20枠の確認 |
 
-`Test_AnomalyEngine.mq5` と `Test_SessionClock.mq5` の2本は価格を読みません。
-日付を与えれば結果が一意に決まるので、失敗したときに原因が必ず特定できます。
-特に夏時間の境界は年に4回しか自然には来ないため、
-実運用を待っていると誤りに半年気づきません。
+---
+
+## 主要ドキュメント
+
+- 設計の正本: `docs/ProjectSpecification.md`
+- 構造説明: `docs/Architecture.md`
+- 開発方針: `docs/DevelopmentPolicy.md`
+- コーディング規約: `docs/CodingRules.md`
+- 利用者向け: `docs/UserManual.md`

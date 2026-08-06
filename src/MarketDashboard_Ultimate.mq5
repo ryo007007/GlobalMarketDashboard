@@ -5,7 +5,7 @@
 //|  相場を見るのではなく、世界のお金の流れを見る。                   |
 //|                                                                    |
 //|  Version : 2.11.0                                                  |
-//|  仕様書  : docs/ProjectSpecification.md (v1.3)                     |
+//|  仕様書  : docs/ProjectSpecification.md (v1.6)                     |
 //|                                                                    |
 //|  Ver2.11 で動く範囲                                                |
 //|    Asset Detection → Currency Strength → Best Pair → Confidence   |

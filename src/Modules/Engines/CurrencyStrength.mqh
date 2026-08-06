@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 主要8通貨の相対的な強弱をスコア化する                     |
 //|  依存 : Types.mqh, Logger.mqh, AssetDetection.mqh                 |
-//|  仕様 : Project Specification v1.3 第5章（Currency Strength v2）  |
+//|  仕様 : Project Specification v1.6 第5章（Currency Strength v2）  |
 //|                                                                   |
 //|  方式 : 直近N本の重み付き集計（既定 3本 / 重み 1:2:3）            |
 //|         上昇した足は基軸通貨へ、下降した足は決済通貨へ加点        |

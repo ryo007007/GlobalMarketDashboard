@@ -5,7 +5,7 @@
 //|  役割 : エンジンの結果を1枚のパネルにまとめて表示する            |
 //|  依存 : Types / Utils / DrawObjects / CurrencyStrength /          |
 //|         BestPair / Confidence                                     |
-//|  仕様 : Project Specification v1.3 第15章                         |
+//|  仕様 : Project Specification v1.6 第15章                         |
 //|                                                                   |
 //|  レイアウト（Ver2.11）                                            |
 //|    ┌────────────────────────────┐                                 |

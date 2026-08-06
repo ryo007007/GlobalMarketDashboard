@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : どの層からも使える小さな汎用関数だけを置く                |
 //|  依存 : Types.mqh のみ                                            |
-//|  仕様 : Project Specification v1.3 第18章                         |
+//|  仕様 : Project Specification v1.6 第18章                         |
 //|                                                                   |
 //|  方針 : ここに「相場の判断」と「描画」を書かない。                |
 //|         描画は Display/DrawObjects.mqh、判断は Engines/ に置く。  |

@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 相場全体が Risk-On か Risk-Off かを1つの値で示す          |
 //|  依存 : Types.mqh, Logger.mqh, AssetDetection.mqh                 |
-//|  仕様 : Project Specification v1.3 第7章                          |
+//|  仕様 : Project Specification v1.6 第7章                          |
 //|                                                                   |
 //|  状態 : [2.20] 未実装。枠のみ。                                   |
 //|                                                                   |

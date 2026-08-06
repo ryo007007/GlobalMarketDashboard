@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 表示している判断をどれだけ信じてよいかを0〜100%で示す     |
 //|  依存 : Types.mqh, CurrencyStrength.mqh                           |
-//|  仕様 : Project Specification v1.3 第8章（8.3.1 Ver2.11暫定式）   |
+//|  仕様 : Project Specification v1.6 第8章（8.3.1 Ver2.11暫定式）   |
 //|                                                                   |
 //|  [2.11] Confidence = (50 + Spread/2) × (PairsUsed / 28)           |
 //|  [2.20] MoneyFlow / MarketRegime を加えた加重平均へ移行する       |

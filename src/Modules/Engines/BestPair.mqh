@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 最強通貨 × 最弱通貨 から推奨ペアと方向を1つ提案する      |
 //|  依存 : Types.mqh, AssetDetection.mqh, CurrencyStrength.mqh       |
-//|  仕様 : Project Specification v1.3 第9章                          |
+//|  仕様 : Project Specification v1.6 第9章                          |
 //|                                                                   |
 //|  重要 : "JPYUSD" のような存在しない表記は絶対に画面へ出さない。   |
 //|         銘柄は実在するものを使い、方向のほうを反転させる。        |

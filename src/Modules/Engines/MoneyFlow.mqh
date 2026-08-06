@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 資金がどこへ向かっているかを判定する                      |
 //|  依存 : Types.mqh, Logger.mqh, AssetDetection.mqh                 |
-//|  仕様 : Project Specification v1.3 第6章                          |
+//|  仕様 : Project Specification v1.6 第6章                          |
 //|                                                                   |
 //|  状態 : [2.20] 未実装。ここは「枠」だけ置いてある。               |
 //|                                                                   |

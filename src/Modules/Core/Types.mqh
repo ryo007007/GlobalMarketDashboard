@@ -4,7 +4,7 @@
 //|                                                                   |
 //|  役割 : 全モジュール共通の列挙型・構造体・インターフェース定義     |
 //|  依存 : なし（このファイルが依存の最下層）                        |
-//|  仕様 : Project Specification v1.2 付録B                          |
+//|  仕様 : Project Specification v1.6 付録B                          |
 //|                                                                   |
 //|  重要 : 型定義は必ずこのファイルに集約する。                      |
 //|         各モジュール内で個別に enum / struct を定義しないこと。   |
@@ -16,21 +16,10 @@
 #define __GMD_TYPES_MQH__
 
 //+------------------------------------------------------------------+
-//| 定数                                                              |
+//| 依存の最下層。定数と共通インターフェースだけ先に読む              |
 //+------------------------------------------------------------------+
-#define GMD_VERSION          "2.11.0"
-#define GMD_OBJ_PREFIX       "GMD_"      // 全チャートオブジェクトの接頭辞
-#define GMD_FX_PAIR_MAX      28          // 8C2 = 28ペア
-#define GMD_CURRENCY_COUNT   8           // USD/EUR/GBP/JPY/AUD/CAD/CHF/NZD
-#define GMD_CANDIDATE_MAX    12          // 1アセットあたりの候補名の最大数
-#define GMD_ANOMALY_MAX      24          // 登録できるアノマリー規則の上限
-#define GMD_ANOMALY_CAP      15          // 合計加点の上限（±）。積み上げの暴走防止
-#define GMD_RISK_BIAS_CAP     5          // 季節性から導くリスク志向バイアスの上限（±）
-                                         //  株の季節性→リスク志向は二次推論のため
-                                         //  アノマリー本体より狭い範囲に抑える
-#define GMD_SESSION_MAX       4          // 東京 / ロンドン / NY / シドニー
-#define GMD_ENERGY_LOOKBACK 100          // 圧縮度をパーセンタイル化する母数（本）
-#define GMD_ENERGY_MIN_BARS 120          // これ未満しか履歴が無ければ算出しない
+#include "Constants.mqh"
+#include "../Interfaces/IEngine.mqh"
 
 //+------------------------------------------------------------------+
 //| 通貨インデックス                                                  |
@@ -349,14 +338,9 @@ struct SAssetRegistry
   };
 
 //+------------------------------------------------------------------+
-//| インターフェース：すべての分析エンジンが実装する                  |
+//| IEngine は Interfaces/IEngine.mqh へ分離済み                      |
+//| ここでは Types から透過的に読めるよう include だけ行っている       |
 //+------------------------------------------------------------------+
-interface IEngine
-  {
-   bool    Calculate(void);        // 計算実行。成功で true
-   bool    IsReady(void);          // 表示可能な状態か
-   string  GetName(void);          // ログ用の名前
-  };
 
 //+------------------------------------------------------------------+
 //| 共通ヘルパー：列挙型 → 文字列                                     |
