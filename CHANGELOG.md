@@ -1,5 +1,29 @@
-
 # Changelog
+
+## Structural Improvements (2026-08-06)
+
+### Display 分割
+
+- `SummaryPanel.mqh` 追加（Best Pair / Confidence / Regime 行の受け皿）
+- `RankingPanel.mqh` 追加（通貨強弱ランキング 8 行の受け皿）
+- `MoneyFlowPanel.mqh` 追加（[2.20] 資金フロー行の受け皿）
+- `StatusBar.mqh` 追加（フッター：更新間隔・段・時刻）
+- `ChartOverlay.mqh` 追加（[2.30+] Hybrid モード用チャート要素）
+- 原則：先に動く Dashboard を壊さず、骨格を置いて段階的に切り出す
+
+### Engines（将来予約）
+
+- `CorrelationEngine.mqh` 追加（[3.00] 相関係数エンジンの枠）
+- `StatisticsEngine.mqh` 追加（[3.00] 統計エンジンの枠）
+
+### Docs / README
+
+- `README.md` を強化（Features 表・Screenshots 枠・インストール・構成・Roadmap）
+- `ROADMAP.md` を詳細化（Ver2.11〜4.00 の到達目標と推奨実装順）
+- `docs/Architecture.md` を Display 分割・将来 Engine に同期
+- `examples/README.md` / `docs/images/README.md` を追加（配置ガイド）
+
+---
 
 ## v2.11
 

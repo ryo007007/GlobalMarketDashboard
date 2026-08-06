@@ -1,6 +1,7 @@
 # システムアーキテクチャ
 
-本ドキュメントは、現行の GMD プロジェクト構造を **実装ベース** で説明するための要約版です。詳細仕様は `ProjectSpecification.md` を正本とし、本書は「どの層が何を担当するか」を素早く把握するために使います。
+本ドキュメントは、現行の GMD プロジェクト構造を **実装ベース** で説明するための要約版です。  
+詳細仕様は `ProjectSpecification.md` を正本とし、本書は「どの層が何を担当するか」を素早く把握するために使います。
 
 ---
 
@@ -14,6 +15,7 @@ MT5 Terminal
 Core
    ├─ Constants        : 共通定数
    ├─ Types            : 列挙型・構造体
+   ├─ Config           : 設定統合の受け皿
    ├─ Logger           : ログと診断
    ├─ Utils            : 汎用関数
    ├─ AssetDetection   : この口座で何が使えるかを確定
@@ -32,12 +34,19 @@ Engines
    ├─ MoneyFlow        : [2.20]
    ├─ MarketRegime     : [2.20]
    ├─ MarketState      : [2.30]
-   └─ AlertEngine      : [2.30]
+   ├─ AlertEngine      : [2.30]
+   ├─ CorrelationEngine: [3.00] 予約
+   └─ StatisticsEngine : [3.00] 予約
    │
    ▼
 Display
    ├─ DrawObjects      : オブジェクト生成/更新の下請け
-   └─ Dashboard        : 1枚パネルの統括
+   ├─ Dashboard        : 1枚パネルの統括・指揮
+   ├─ SummaryPanel     : Best Pair / Confidence / Regime 行
+   ├─ RankingPanel     : 通貨強弱ランキング 8 行
+   ├─ MoneyFlowPanel   : [2.20] 資金フロー行
+   ├─ StatusBar        : フッター（更新間隔・ペア数・時刻）
+   └─ ChartOverlay     : [2.30+] Hybrid モード用チャート要素
    │
    ▼
 Chart
@@ -54,7 +63,7 @@ Display  ──依存──▶  Engines  ──依存──▶  Core
 - Core は最下層です。上位層を参照しません。
 - Engines は計算だけを担当し、描画を持ちません。
 - Display は描画だけを担当し、分析ロジックを持ちません。
-- `IEngine` は `src/Modules/Interfaces/IEngine.mqh` に分離し、将来の拡張時に型定義との責務を混ぜない構成にしています。
+- `IEngine` / `IDashboard` / `IIndicator` は `src/Modules/Interfaces/` に分離し、型定義との責務を混ぜません。
 
 ---
 
@@ -69,7 +78,7 @@ AssetDetection
   → EnergyEngine
   → BestPair
   → Confidence
-  → Dashboard
+  → Dashboard（＋分割パネル骨格）
 ```
 
 以下は予約済みです。
@@ -78,6 +87,8 @@ AssetDetection
 - `MarketRegime.mqh` `[2.20]`
 - `MarketState.mqh` `[2.30]`
 - `AlertEngine.mqh` `[2.30]`
+- `CorrelationEngine.mqh` `[3.00]`
+- `StatisticsEngine.mqh` `[3.00]`
 
 重要なのは、**予約席を作ること** と **未完成機能を完成扱いしないこと** を分けることです。
 
@@ -90,7 +101,7 @@ OnInit()
   ├─ Logger 初期化
   ├─ AssetDetection 初期化
   ├─ 各Engine 初期化
-  ├─ Dashboard 構築
+  ├─ Dashboard 構築（内部で各 Panel を初期化）
   ├─ 初回計算
   ├─ 初回描画
   └─ MillisecondTimer 開始
@@ -106,40 +117,61 @@ OnTimer()
   ├─ EnergyEngine.Calculate()
   ├─ BestPair.Calculate()
   ├─ Confidence.Calculate()
-  ├─ Dashboard.Update()
+  ├─ Dashboard.Update()  （各 Panel へ差分更新を委譲）
   └─ AdaptiveUpdate に応じてタイマー再設定
 ```
 
 ---
 
-## 5. 今回の構造改善
+## 5. Display 分割方針
 
-今回の整理で、レビュー指摘のうち将来効く部分を先に反映しています。
+Ver2.11 時点では描画ロジックの多くが `Dashboard.mqh` に集約されている。  
+将来の保守性のため、以下のパネルに段階的に切り出す。
 
-### 5.1 Interfaces を分離
+| ファイル | 担当 | 導入時期 |
+|----------|------|----------|
+| `SummaryPanel.mqh` | Best Pair / Confidence / Regime 行 | 骨格済 → 本実装は描画安定後 |
+| `RankingPanel.mqh` | 通貨強弱 8 行 | 骨格済 |
+| `MoneyFlowPanel.mqh` | 資金フロー行 | [2.20] |
+| `StatusBar.mqh` | フッター（間隔・段・時刻） | 骨格済 |
+| `ChartOverlay.mqh` | Hybrid モードのチャート要素 | [2.30+] |
+| `DrawObjects.mqh` | 低レベル ObjectCreate / Set の共通化 | ✅ |
+| `Dashboard.mqh` | 統括・レイアウト・呼び出し順 | ✅ |
+
+切り出しの原則：
+- **先に動くものを壊さない**。骨格を置き、中身は Dashboard が動いている間に徐々に移す。
+- 各 Panel は `Build()` / `Update()` / `Destroy()` のライフサイクルを持つ（`IDashboard` 契約に準拠）。
+
+---
+
+## 6. 今回の構造改善（反映済み）
+
+### 6.1 Interfaces を分離
 - `Interfaces/IEngine.mqh`
 - `Interfaces/IDashboard.mqh`
 - `Interfaces/IIndicator.mqh`
 
-### 5.2 Constants を分離
+### 6.2 Constants / Config を分離
 - `Core/Constants.mqh`
-- 既存の `Types.mqh` からマジックナンバーを切り離し
-
-### 5.3 Config の受け皿を追加
 - `Core/Config.mqh`
-- 本体 `input` 群を将来段階的に構造化する準備
 
-### 5.4 AssetDetection の境界を明確化
-- `Core/SymbolCache.mqh` を追加
-- L1（メモリ）と L2（CSV永続化）を今後分離しやすい形に変更
+### 6.3 AssetDetection の境界を明確化
+- `Core/SymbolCache.mqh`（L2 永続化の受け皿）
 
-### 5.5 Session の発展余地を確保
-- `Core/SessionClock.mqh` は現役の実装
-- `Core/SessionManager.mqh` は将来の多市場統括の受け皿
+### 6.4 Session の発展余地
+- `Core/SessionClock.mqh`（現役）
+- `Core/SessionManager.mqh`（将来の多市場統括）
+
+### 6.5 Display の分割骨格
+- Summary / Ranking / MoneyFlow / StatusBar / ChartOverlay を追加
+
+### 6.6 将来 Engine の予約席
+- `CorrelationEngine.mqh` `[3.00]`
+- `StatisticsEngine.mqh` `[3.00]`
 
 ---
 
-## 6. 補足
+## 7. 補足
 
 - 仕様の正本: `docs/ProjectSpecification.md`
 - ユーザー向け説明: `docs/UserManual.md`
