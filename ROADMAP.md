@@ -29,6 +29,7 @@
 
 | モジュール | 内容 |
 |------------|------|
+| **Price Level Engine** | 日/週/月の高安・距離・接近色・Dashboard 行 |
 | Money Flow | 株・貴金属・暗号・債券の資金流出入判定 |
 | Market Regime | Risk ON / OFF / Neutral の合成スコア |
 | Symbol Cache (L2) | CSV 永続化キャッシュ |
@@ -43,6 +44,7 @@
 |------------|------|
 | Market State | Quiet / Building / Expansion / Trending の4状態 |
 | Alert Engine | 遷移検出・ヒステリシス・冷却付き通知 |
+| Price Level ↔ Alert | 接近エッジ通知・Breakout/Breakdown Watch 表示 |
 | Display Mode | Chart / Dashboard / Hybrid / Minimal の完成 |
 | ChartOverlay | Hybrid モード用チャート要素 |
 | Economic Events | 主要指標カウントダウン |

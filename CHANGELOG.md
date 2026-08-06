@@ -1,5 +1,24 @@
 # Changelog
 
+## Price Level Engine Spec (2026-08-06)
+
+### Spec
+
+- `docs/ProjectSpecification.md` を **v1.7 Draft** に更新
+- **第40章 Price Level Engine** を新設
+  - Today / Yesterday / Weekly / Monthly の高安
+  - 距離（pips）・接近色・Dashboard 表示
+  - Breakout / Breakdown Watch（Strength・Energy・Anomaly 連携方針）
+  - アラートは AlertEngine に委譲（エッジ検出）
+
+### Code / Tests
+
+- `Engines/PriceLevelEngine.mqh` 骨格追加 `[2.20+]`
+- `tests/Test_PriceLevelEngine.mq5` 追加
+- EngineIndex / Architecture / ROADMAP / README を同期
+
+---
+
 ## Test Coverage & Docs (2026-08-06)
 
 ### tests（Engine 1:1 対応）

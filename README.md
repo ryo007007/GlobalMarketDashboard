@@ -24,6 +24,7 @@ Global Market Dashboard Ultimate（GMD）は、MetaTrader 5 上で
 | **Adaptive Update** | 市場状況に応じて更新間隔を 3 段切替 | ✅ 稼働中 |
 | **Session Clock** | 現地時刻＋地域別夏時間でセッション判定 | ✅ 稼働中 |
 | **Money Flow** | アセット間の資金流出入 | 🔜 Ver2.20 |
+| **Price Level** | 日/週/月の高安と距離・接近監視 | 🔜 Ver2.20+ |
 | **Market Regime** | Risk ON / OFF / Neutral | 🔜 Ver2.20 |
 | **Market State / Alert** | 状態畳み込み・遷移通知 | 🔜 Ver2.30 |
 | **Correlation / Statistics** | 相関・統計エンジン | 📋 Ver3.00 |
@@ -115,6 +116,7 @@ GlobalMarketDashboard/
 | `Test_AlertEngine.mq5` | Ver2.30 枠の確認 |
 | `Test_CorrelationEngine.mq5` | Ver3.00 予約枠の確認 |
 | `Test_StatisticsEngine.mq5` | Ver3.00 予約枠の確認 |
+| `Test_PriceLevelEngine.mq5` | Ver2.20+ 枠の確認 |
 
 エンジンとテストの対応表は [`docs/EngineIndex.md`](docs/EngineIndex.md) を参照。
 

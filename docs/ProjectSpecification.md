@@ -7,7 +7,7 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v1.6 Draft** |
+| Document Version | Project Specification **v1.7 Draft** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
 | Last Update | 2026-08-06 |
@@ -48,6 +48,7 @@
 **Part VII — 制御・状態・通知（Ver2.11〜2.30）**
 36. Adaptive Update Engine　37. Energy Engine
 38. Market State Engine [2.30]　39. Alert Engine [2.30]
+40. Price Level Engine [2.20+]
 
 **付録**
 A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
@@ -261,6 +262,7 @@ GMDは以下の6つの分析エンジンと、それらを束ねるダッシュ�
 | Adaptive Update Engine | 市場時間と圧縮から更新間隔の段を決める（分析ではなく制御） |
 | Market State Engine `[2.30]` | 上記を1つの「現在の市場状態」に畳む |
 | Alert Engine `[2.30]` | 条件が成立した瞬間に1回だけ知らせる |
+| Price Level Engine `[2.20+]` | 重要価格帯（日/週/月の高安）と現在価格の距離を数値化し、接近・ブレイク監視する |
 
 Energy と Adaptive Update は厳密には分析エンジンではない。Energy は方向を出さず、Adaptive Update は市場を判定しない。だが `IEngine` の呼び出し規約に揃えておくほうが本体が単純になるため、同じ場所に置いている。
 
@@ -3578,6 +3580,179 @@ class CAlertEngine
 
 - 経済指標カレンダー連動（36.14 と同時）
 - 通知履歴のCSV出力。どの通知が実際に役に立ったかを事後に数える
+
+---
+
+
+## 40. Price Level Engine [2.20+]（重要価格帯）
+
+> **実装フェーズ**：設計は Ver2.11 時点で固める。本実装の優先は Ver2.20 以降。  
+> Ver2.11 の成功基準には含めない。ただし「今見ているチャートの実戦価格」をダッシュボードに載せるための予約席として、本章と骨格ファイルを先に置く。
+
+### 40.1 Purpose
+
+チャート上の**重要価格帯**（当日・前日・週・月の高値/安値）を検出し、現在価格との距離を pips で数値化する。  
+市場全体の流れ（Currency Strength / Money Flow / Regime）だけでなく、**エントリーや利確を意識すべき価格**を同一画面で把握できるようにする。
+
+単なる高値・安値アラートで終わらせず、既存エンジンと組み合わせて「Breakout Watch / Breakdown Watch」の文脈を出す。
+
+### 40.2 Inputs
+
+| 項目 | 内容 |
+|---|---|
+| 対象銘柄 | 原則 `_Symbol`（今見ているチャート1本）。将来は AssetDetection 経由で主要指数にも拡張可 |
+| 価格帯 | Today H/L, Yesterday H/L, Weekly H/L, Monthly H/L（既定で8本） |
+| 時間足 | D1 を基準に「昨日」「今週」「今月」を定義。週・月の境界はブローカーの日足に依存 |
+| アラート距離 | 入力パラメータ（例: 5 / 10 / 20 / 50 pips）。複数閾値で色分け |
+| 表示する期間 | ON/OFF または期間選択（今日 / 前日 / 1週 / 2週 / 1か月 / 任意日数） |
+
+### 40.3 Calculation
+
+#### 40.3.1 レベル取得
+
+| レベル | 定義（概念） |
+|---|---|
+| Today High / Low | 当日の確定前を含む当日レンジ（iHigh/iLow の当日バー、またはティック更新） |
+| Yesterday High / Low | 直近の**確定済み**日足1本の高安 |
+| Weekly High / Low | 直近 N 日（既定7）または週足1本の高安 |
+| Monthly High / Low | 直近 M 日（既定30）または月足1本の高安 |
+
+実装時は「日足の CopyRates から期間最大/最小を取る」方式を既定とする。週足・月足がブローカーに無い場合でも日足集計で代替できる。
+
+#### 40.3.2 距離（pips）
+
+```
+distance_pips = |level_price - Bid| / pip_size
+```
+
+- `pip_size` は銘柄の桁に依存（例: 5桁FXは 0.0001、JPY は 0.01、金はポイント定義を Utils に集約）
+- **符号付き距離**も保持する（上側レベルなら正=まだ下、負=既に上抜け など）。表示は「あと X pips」を優先
+
+#### 40.3.3 接近色
+
+| 距離 | 色（案） | 意味 |
+|---|---|---|
+| ≥ 50 pips | 白 | 遠い |
+| ≤ 20 pips | 黄 | 接近 |
+| ≤ 10 pips | オレンジ | 近接 |
+| ≤ 5 pips  | 赤 | 直前 |
+
+閾値は入力パラメータ化（`Inp_LevelWarnPips` 等）。通貨強弱の赤青ルールとは別関数（`GetLevelProximityColor()`）にする。
+
+#### 40.3.4 Breakout / Breakdown Watch（他エンジン連携）
+
+単独の距離表示に加え、次の合成フラグを出す（表示用。予測の断言ではない）。
+
+| 条件 | 表示 |
+|---|---|
+| 最強通貨側のペアが Weekly/Monthly High に接近 | `Breakout Watch` |
+| 最弱通貨側のペアが Weekly/Monthly Low に接近 | `Breakdown Watch` |
+| Energy が LOADED/RELEASED かつ High に接近 | 警戒度を上げて表示（文言は「準備」まで。確率表記はしない） |
+| Anomaly が同方向かつ High/Low に接近 | Confidence への**加算はしない**（Ver2.11方針）。別行で文脈表示のみ |
+
+Energy の「%」表記禁止方針（37章）に合わせ、Breakout を確率として書かない。
+
+### 40.4 Output
+
+| 項目 | 型 | 説明 |
+|---|---|---|
+| Levels[] | struct | 各レベルの price / distance_pips / side / label |
+| NearestLevel | struct | 最も近い1本 |
+| WatchFlag | enum | NONE / BREAKOUT_WATCH / BREAKDOWN_WATCH |
+| IsReady | bool | 必要バーが揃っているか |
+
+```cpp
+struct SPriceLevel
+  {
+   string label;        // "WH" / "WL" / "MH" ...
+   double price;
+   double distancePips; // 絶対距離
+   int    side;         // +1=上側レベル, -1=下側レベル
+   color  proximityColor;
+  };
+```
+
+### 40.5 Display
+
+コンパクト表示（ダッシュボード右下イメージ）:
+
+```
+Price Levels
+WH +8
+WL 92
+MH 45
+ML 210
+YH 12
+YL 33
+```
+
+- `+` は上側レベルまでの距離、符号なしまたは下側は別表記でも可（実装で統一）
+- 接近中は色を変える
+- 1行の Watch 表示例: `Breakout Watch  WH 4pips`
+
+### 40.6 Class Interface
+
+```cpp
+class CPriceLevelEngine : public IEngine
+  {
+public:
+   bool   Init(CLogger *logger, const string symbol,
+               const int weeklyDays = 7, const int monthlyDays = 30);
+   void   SetAlertThresholds(const int warn20, const int warn10, const int warn5);
+   void   SetEnabledLevels(const bool today, const bool yesterday,
+                           const bool weekly, const bool monthly);
+
+   bool   Calculate(void);           // IEngine
+   bool   IsReady(void);
+   string GetName(void);             // "PriceLevel"
+
+   int    GetLevelCount(void);
+   bool   GetLevel(const int index, SPriceLevel &out);
+   bool   GetNearest(SPriceLevel &out);
+   ENUM_PRICE_WATCH GetWatchFlag(void);
+   string GetDisplayText(void);      // 複数行 or 要約1行
+   string GetWatchText(void);
+  };
+```
+
+### 40.7 Implementation Notes
+
+1. **今見ているチャート1本に限定する（既定）**  
+   28ペア分の週次高安を毎秒取ると重い。Energy と同じく「行動につながる銘柄」に絞る。
+2. **pip 定義は Utils に集約**  
+   Display や Alert が独自換算しない。
+3. **アラートは AlertEngine 経由**  
+   PriceLevel 自身は「距離とフラグ」だけ出す。鳴らし方・冷却・静音は 39章に任せる。接近のエッジ（例: 10pips をまたいだ瞬間）だけを `Raise` する。
+4. **週末・日足未確定**  
+   Weekly/Monthly は確定バー優先。Today のみティックで更新してよい。
+5. **色ルールの分離**  
+   強弱の赤青と接近の黄橙赤を混同しない。
+
+### 40.8 設定項目（追加予定）
+
+| パラメータ | 既定 | 説明 |
+|---|---|---|
+| `Inp_EnablePriceLevels` | true | 機能ON/OFF |
+| `Inp_LevelWeeklyDays` | 7 | 週次集計日数 |
+| `Inp_LevelMonthlyDays` | 30 | 月次集計日数 |
+| `Inp_LevelWarnPips` | 20,10,5 | 色分け閾値 |
+| `Inp_LevelAlertPips` | 5 | AlertEngine に渡す接近距離 |
+| `Inp_ShowLevelToday` 等 | true | レベル種別の表示ON/OFF |
+
+### 40.9 Future Expansion
+
+- Pivot / ラウンドナンバー（00・50）の追加
+- 複数時間足の「一致した高安」だけを強調
+- Correlation と組み合わせた「指数も同時に高値圏」表示
+- 任意日数（`Inp_LevelCustomDays`）
+
+### 40.10 ロードマップ上の位置
+
+| バージョン | 内容 |
+|---|---|
+| Ver2.11 | 仕様確定・骨格（本ファイル）のみ。成功基準外 |
+| Ver2.20 | レベル取得・距離・色・Dashboard 行 |
+| Ver2.30 | AlertEngine 連携（接近エッジ）・Watch フラグと Strength/Energy の合成表示 |
 
 ---
 
