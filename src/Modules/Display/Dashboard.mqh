@@ -37,6 +37,9 @@
 #include "../Engines/BestPair.mqh"
 #include "../Engines/Confidence.mqh"
 #include "../Engines/AnomalyEngine.mqh"
+#include "../Engines/EnergyEngine.mqh"
+#include "../Engines/AdaptiveUpdate.mqh"
+#include "../Core/SessionClock.mqh"
 
 //+------------------------------------------------------------------+
 class CDashboard
@@ -46,6 +49,9 @@ private:
    CBestPair         *m_bestPair;
    CConfidence       *m_confidence;
    CAnomalyEngine    *m_anomaly;        // 任意。NULLなら行を出さない
+   CEnergyEngine     *m_energy;         // 任意
+   CSessionClock     *m_clock;          // 任意
+   CAdaptiveUpdate   *m_adaptive;       // 任意
    CLogger           *m_log;
 
    //--- レイアウト
@@ -81,7 +87,10 @@ public:
                           CConfidence *confidence,
                           CLogger *logger);
 
-   void              SetAnomaly(CAnomalyEngine *anomaly) { m_anomaly = anomaly; }
+   void              SetAnomaly(CAnomalyEngine *anomaly)   { m_anomaly  = anomaly; }
+   void              SetEnergy(CEnergyEngine *energy)      { m_energy   = energy; }
+   void              SetClock(CSessionClock *clock)        { m_clock    = clock; }
+   void              SetAdaptive(CAdaptiveUpdate *adaptive){ m_adaptive = adaptive; }
 
    void              SetLayout(const int x, const int y,
                                const int fontSize = 9,
@@ -100,6 +109,9 @@ CDashboard::CDashboard(void) : m_cs(NULL),
                                m_bestPair(NULL),
                                m_confidence(NULL),
                                m_anomaly(NULL),
+                               m_energy(NULL),
+                               m_clock(NULL),
+                               m_adaptive(NULL),
                                m_log(NULL),
                                m_x(20),
                                m_y(30),
@@ -155,7 +167,7 @@ void CDashboard::SetLayout(const int x, const int y,
 
    //--- 文字サイズに合わせて行間とパネル幅を決める
    m_rowHeight  = fontSize + 7;
-   m_panelWidth = fontSize * 25;
+   m_panelWidth = fontSize * 30;
   }
 
 //+------------------------------------------------------------------+
@@ -179,9 +191,12 @@ bool CDashboard::Build(void)
    //   12       : Confidence
    //   13       : Anomaly
    //   14       : Season（リスク志向バイアス）
-   //   15       : Regime（Ver2.20の枠）
-   //   16       : フッター
-   const int totalRows   = 17;
+   //   15       : Energy（圧縮）
+   //   16       : 区切り
+   //   17       : Session（開いている市場 / 次の開始まで）
+   //   18       : Regime（Ver2.20の枠）
+   //   19       : フッター（更新間隔の段を含む）
+   const int totalRows   = 20;
    const int panelHeight = 16 + totalRows * m_rowHeight;
 
    DrawPanel(CalcObjectName("Panel"), m_x, m_y,
@@ -215,10 +230,19 @@ bool CDashboard::Build(void)
    DrawLabel(CalcObjectName("Season"), tx, RowY(14),
              "Season  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Regime"), tx, RowY(15),
+   DrawLabel(CalcObjectName("Energy"), tx, RowY(15),
+             "Energy  --------  --", clrGray, m_fontSize, m_font, m_corner);
+
+   DrawSeparator(CalcObjectName("Sep3"), m_x + 8, RowY(16) + 6,
+                 m_panelWidth - 16, m_borderColor, m_corner);
+
+   DrawLabel(CalcObjectName("Session"), tx, RowY(17),
+             "Session  --", m_subColor, m_fontSize, m_font, m_corner);
+
+   DrawLabel(CalcObjectName("Regime"), tx, RowY(18),
              "Regime  --  [2.20]", m_subColor, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Footer"), tx, RowY(16),
+   DrawLabel(CalcObjectName("Footer"), tx, RowY(19),
              BuildFooterText(), m_subColor, m_fontSize - 1, m_font, m_corner);
 
    m_built = true;
@@ -302,6 +326,25 @@ bool CDashboard::Update(void)
          changed++;
      }
 
+   //--- Energy（圧縮）
+   //    「どちらへ動くか」は言わない。動く準備ができているかだけ
+   if(m_energy != NULL)
+     {
+      if(UpdateLabel(CalcObjectName("Energy"),
+                     m_energy.GetDisplayText(),
+                     m_energy.GetColor()))
+         changed++;
+     }
+
+   //--- Session（いま開いている市場）
+   if(m_clock != NULL)
+     {
+      if(UpdateLabel(CalcObjectName("Session"),
+                     m_clock.GetDisplayText(),
+                     m_subColor))
+         changed++;
+     }
+
    //--- フッター
    if(UpdateLabel(CalcObjectName("Footer"), BuildFooterText(), m_subColor))
       changed++;
@@ -357,10 +400,19 @@ string CDashboard::BuildFooterText(void)
   {
    const int used = (m_cs != NULL ? m_cs.GetPairsUsed() : 0);
 
-   return(StringFormat("%d/%d pairs   %s",
+   //--- いま何msで回っているかを常に出す。
+   //    可変にした以上、隠すと性能問題の切り分けができなくなる
+   string tier = "";
+   if(m_adaptive != NULL)
+      tier = StringFormat("   %dms %s",
+                          m_adaptive.GetIntervalMs(),
+                          UpdateTierToString(m_adaptive.GetTier()));
+
+   return(StringFormat("%d/%d pairs   %s%s",
                        used,
                        GMD_FX_PAIR_MAX,
-                       TimeToString(TimeCurrent(), TIME_SECONDS)));
+                       TimeToString(TimeCurrent(), TIME_SECONDS),
+                       tier));
   }
 
 #endif // __GMD_DASHBOARD_MQH__

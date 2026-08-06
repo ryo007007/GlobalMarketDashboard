@@ -28,6 +28,9 @@
 #define GMD_RISK_BIAS_CAP     5          // 季節性から導くリスク志向バイアスの上限（±）
                                          //  株の季節性→リスク志向は二次推論のため
                                          //  アノマリー本体より狭い範囲に抑える
+#define GMD_SESSION_MAX       4          // 東京 / ロンドン / NY / シドニー
+#define GMD_ENERGY_LOOKBACK 100          // 圧縮度をパーセンタイル化する母数（本）
+#define GMD_ENERGY_MIN_BARS 120          // これ未満しか履歴が無ければ算出しない
 
 //+------------------------------------------------------------------+
 //| 通貨インデックス                                                  |
@@ -170,6 +173,87 @@ enum ENUM_RISK_BIAS
    RISK_BIAS_OFF  = -1,
    RISK_BIAS_FLAT =  0,
    RISK_BIAS_ON   =  1
+  };
+
+//+------------------------------------------------------------------+
+//| 市場セッション                                  [2.11] Session    |
+//+------------------------------------------------------------------+
+enum ENUM_SESSION
+  {
+   SESSION_SYDNEY = 0,
+   SESSION_TOKYO,
+   SESSION_LONDON,
+   SESSION_NEWYORK,
+   SESSION_COUNT                   // 常に末尾（= 4）
+  };
+
+//+------------------------------------------------------------------+
+//| セッションに対する現在位置                      [2.11] Session    |
+//|  Pre  : 開始前の警戒帯（既定15分前から）                          |
+//|  Open : 開始直後の急変帯（既定30分間）                            |
+//|  Core : 通常の取引時間内                                          |
+//|  Off  : 時間外                                                    |
+//+------------------------------------------------------------------+
+enum ENUM_SESSION_PHASE
+  {
+   PHASE_OFF = 0,
+   PHASE_PRE,
+   PHASE_OPEN,
+   PHASE_CORE
+  };
+
+//+------------------------------------------------------------------+
+//| 更新間隔の段                                    [2.11] Adaptive   |
+//|  「速い＝良い」ではない。段は3つに絞る。                          |
+//|  段を増やすと、いま何msで動いているのか誰も追えなくなる。         |
+//+------------------------------------------------------------------+
+enum ENUM_UPDATE_TIER
+  {
+   TIER_IDLE   = 0,                // 静かな時間帯。負荷を落とす
+   TIER_NORMAL = 1,                // 平常
+   TIER_ALERT  = 2                 // セッション開始前後・高圧縮時
+  };
+
+//+------------------------------------------------------------------+
+//| エネルギー（圧縮）の状態                        [2.20] Energy     |
+//|                                                                   |
+//|  重要 : このエンジンは「どちらへ動くか」を一切示さない。          |
+//|         示すのは「動く準備ができているか」だけである。            |
+//|         方向を知りたければ CurrencyStrength を見る。              |
+//+------------------------------------------------------------------+
+enum ENUM_ENERGY_STATE
+  {
+   ENERGY_UNAVAILABLE = 0,         // 履歴不足などで算出できない
+   ENERGY_NORMAL,                  // 圧縮していない
+   ENERGY_BUILDING,                // 圧縮が進んでいる
+   ENERGY_LOADED,                  // 高圧縮が継続している
+   ENERGY_RELEASED                 // 圧縮が解けた直後。ここが事象である
+  };
+
+//+------------------------------------------------------------------+
+//| 市場状態                                        [2.30] MarketState|
+//|                                                                   |
+//|  観測できるものだけを状態にする。                                 |
+//|  「天井」「反転」は後から振り返って初めて分かるため、             |
+//|  現在の状態としては表示しない（仕様書38.3）。                     |
+//+------------------------------------------------------------------+
+enum ENUM_MARKET_STATE
+  {
+   STATE_UNKNOWN = 0,
+   STATE_QUIET,                    // 静か。圧縮も方向も無い
+   STATE_BUILDING,                 // 圧縮が進行
+   STATE_EXPANSION,                // 圧縮が解けて値幅が出た
+   STATE_TRENDING                  // 方向が継続している
+  };
+
+//+------------------------------------------------------------------+
+//| 通知の重大度                                    [2.30] Alert      |
+//+------------------------------------------------------------------+
+enum ENUM_ALERT_LEVEL
+  {
+   ALERT_INFO = 0,
+   ALERT_NOTICE,
+   ALERT_IMPORTANT
   };
 
 //+------------------------------------------------------------------+
@@ -336,6 +420,63 @@ string RiskBiasToString(const ENUM_RISK_BIAS b)
       case RISK_BIAS_ON:  return("risk-on bias");
       case RISK_BIAS_OFF: return("risk-off bias");
       default:            return("no bias");
+     }
+  }
+
+string SessionToString(const ENUM_SESSION s)
+  {
+   switch(s)
+     {
+      case SESSION_SYDNEY:  return("Sydney");
+      case SESSION_TOKYO:   return("Tokyo");
+      case SESSION_LONDON:  return("London");
+      case SESSION_NEWYORK: return("NewYork");
+      default:              return("?");
+     }
+  }
+
+string SessionPhaseToString(const ENUM_SESSION_PHASE p)
+  {
+   switch(p)
+     {
+      case PHASE_PRE:  return("Pre");
+      case PHASE_OPEN: return("Open");
+      case PHASE_CORE: return("Core");
+      default:         return("Off");
+     }
+  }
+
+string UpdateTierToString(const ENUM_UPDATE_TIER t)
+  {
+   switch(t)
+     {
+      case TIER_IDLE:  return("Idle");
+      case TIER_ALERT: return("Alert");
+      default:         return("Normal");
+     }
+  }
+
+string EnergyStateToString(const ENUM_ENERGY_STATE e)
+  {
+   switch(e)
+     {
+      case ENERGY_NORMAL:   return("Normal");
+      case ENERGY_BUILDING: return("Building");
+      case ENERGY_LOADED:   return("Loaded");
+      case ENERGY_RELEASED: return("Released");
+      default:              return("--");
+     }
+  }
+
+string MarketStateToString(const ENUM_MARKET_STATE m)
+  {
+   switch(m)
+     {
+      case STATE_QUIET:     return("Quiet");
+      case STATE_BUILDING:  return("Building");
+      case STATE_EXPANSION: return("Expansion");
+      case STATE_TRENDING:  return("Trending");
+      default:              return("--");
      }
   }
 

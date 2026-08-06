@@ -124,6 +124,14 @@ bool DetectNewBar(const string symbol, const ENUM_TIMEFRAMES tf, datetime &lastB
 //+------------------------------------------------------------------+
 //| 値を範囲内に収める                                                |
 //+------------------------------------------------------------------+
+int CalcClampInt(const int value, const int lo, const int hi)
+  {
+   if(value < lo) return(lo);
+   if(value > hi) return(hi);
+   return(value);
+  }
+
+//+------------------------------------------------------------------+
 double CalcClamp(const double value, const double lo, const double hi)
   {
    if(value < lo)
