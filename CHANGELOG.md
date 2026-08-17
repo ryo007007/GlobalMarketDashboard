@@ -1,5 +1,31 @@
 # Changelog
 
+## CurrencyStrength Startup / Cache Fix (2026-08-17)
+
+### Symptoms fixed
+- 起動後ランキング表示まで **1分以上**
+- 同じチャートでは出ず、**銘柄変更後に初めて表示**
+
+### Root cause
+- `OnInit` 内の `CalcAll()` が終わるまでタイマー未開始
+- 毎回 28 ペア × `CopyRates` でヒストリー同期待ちが直列化
+
+### Changes
+1. **`MarketDashboard_Ultimate.mq5`**
+   - タイマーを先に開始（初回 300ms）
+   - 重い初回 `CalcAll` は `OnTimer` に委譲
+   - Dashboard は即表示
+
+2. **`CurrencyStrength.mqh`**
+   - ペアごと OHLC **キャッシュ**（同一確定足なら CopyRates しない）
+   - 1回の Calculate で新規ロードは最大 **8 ペア**（段階ロード）
+   - スコア計算ロジック（重み・Momentum）は変更なし
+
+3. **`Dashboard.mqh`**
+   - 未 Ready 時フッターを `Loading n/28` 表示
+
+---
+
 ## Fix: CurrencyStrength 1/28 pairs on Dashboard (2026-08-17)
 
 ### Cause

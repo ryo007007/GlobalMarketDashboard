@@ -8,6 +8,11 @@
 //|                                                                   |
 //|  方式 : 直近N本の重み付き集計（既定 3本 / 重み 1:2:3）            |
 //|         上昇した足は基軸通貨へ、下降した足は決済通貨へ加点        |
+//|                                                                   |
+//|  データ取得（v2.11 startup/cache fix）                            |
+//|    ・各ペアの OHLC をキャッシュし、新バー時だけ CopyRates         |
+//|    ・1回の Calculate で未取得ペアは最大 BATCH 本まで取得          |
+//|      （起動時に 28 回ブロックしない）                             |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -17,6 +22,20 @@
 #include "../Core/Types.mqh"
 #include "../Core/Logger.mqh"
 #include "../Core/AssetDetection.mqh"
+
+#define GMD_CS_CACHE_MAX   28
+#define GMD_CS_LOAD_BATCH   8     // 1回の Calculate で新規ロードする上限
+#define GMD_CS_SHIFT_MAX   11
+
+//+------------------------------------------------------------------+
+struct SCsPairCache
+  {
+   string   symbol;
+   datetime closedBarTime;        // shift=1 の確定足時刻
+   double   open[GMD_CS_SHIFT_MAX];
+   double   close[GMD_CS_SHIFT_MAX];
+   bool     filled;
+  };
 
 //+------------------------------------------------------------------+
 //| CCurrencyStrength                                                 |
@@ -43,11 +62,19 @@ private:
    int               m_pairsUsed;
    int               m_maxScore;              // 7 × 重み合計
    bool              m_ready;
+   int               m_lastLoggedPairs;       // CS-101 の連打防止
+   int               m_loadCursor;            // 段階ロードの開始位置
+
+   //--- ペアごとのレートキャッシュ（28枠）
+   SCsPairCache      m_cache[GMD_CS_CACHE_MAX];
 
    void              ClearResults(void);
+   void              ClearCache(void);
    int               WeightOf(const int shift) const;
    int               TotalWeight(void) const;
    void              BuildRanking(void);
+   int               PairSlot(const int b, const int q) const;
+   bool              EnsurePairCache(const string sym, const int slot);
 
 public:
                      CCurrencyStrength(void);
@@ -79,6 +106,7 @@ public:
    color             GetColor(const ENUM_CURRENCY c);
    ENUM_TIMEFRAMES   GetTimeframe(void) { return(m_tf);   }
    int               GetBars(void)      { return(m_bars); }
+   bool              IsLoading(void)    { return(!m_ready && m_pairsUsed < m_minPairs); }
 
    string            BuildRankingText(void);
   };
@@ -92,9 +120,12 @@ CCurrencyStrength::CCurrencyStrength(void) : m_assets(NULL),
                                              m_minPairs(20),
                                              m_pairsUsed(0),
                                              m_maxScore(0),
-                                             m_ready(false)
+                                             m_ready(false),
+                                             m_lastLoggedPairs(-1),
+                                             m_loadCursor(0)
   {
    ClearResults();
+   ClearCache();
   }
 
 //+------------------------------------------------------------------+
@@ -114,6 +145,88 @@ void CCurrencyStrength::ClearResults(void)
       m_byRank[i]   = (ENUM_CURRENCY)i;
      }
    m_pairsUsed = 0;
+  }
+
+//+------------------------------------------------------------------+
+void CCurrencyStrength::ClearCache(void)
+  {
+   for(int i = 0; i < GMD_CS_CACHE_MAX; i++)
+     {
+      m_cache[i].symbol        = "";
+      m_cache[i].closedBarTime = 0;
+      m_cache[i].filled        = false;
+      for(int s = 0; s < GMD_CS_SHIFT_MAX; s++)
+        {
+         m_cache[i].open[s]  = 0.0;
+         m_cache[i].close[s] = 0.0;
+        }
+     }
+   m_loadCursor = 0;
+  }
+
+//+------------------------------------------------------------------+
+int CCurrencyStrength::PairSlot(const int b, const int q) const
+  {
+   // 上三角 (b < q) を 0..27 に写像
+   int slot = 0;
+   for(int i = 0; i < b; i++)
+      slot += (CUR_COUNT - 1 - i);
+   slot += (q - b - 1);
+   if(slot < 0 || slot >= GMD_CS_CACHE_MAX)
+      return(0);
+   return(slot);
+  }
+
+//+------------------------------------------------------------------+
+//| キャッシュを必要時だけ更新する。成功で true。                     |
+//|  ・同一確定足なら CopyRates しない（毎秒28回を防ぐ）              |
+//|  ・未取得時のみ呼び出し側がバッチ制限する                         |
+//+------------------------------------------------------------------+
+bool CCurrencyStrength::EnsurePairCache(const string sym, const int slot)
+  {
+   if(slot < 0 || slot >= GMD_CS_CACHE_MAX || sym == "")
+      return(false);
+
+   if(!SymbolSelect(sym, true))
+     {
+      m_cache[slot].filled = false;
+      return(false);
+     }
+
+   //--- キャッシュヒット: 直近確定足の時刻が同じなら再取得しない
+   const datetime t1 = iTime(sym, m_tf, 1);
+   if(m_cache[slot].filled &&
+      m_cache[slot].symbol == sym &&
+      t1 > 0 &&
+      m_cache[slot].closedBarTime == t1)
+      return(true);
+
+   MqlRates rates[];
+   const int need = m_bars + 1;
+   const int copied = CopyRates(sym, m_tf, 0, need, rates);
+   if(copied < need)
+     {
+      m_cache[slot].filled = false;
+      return(false);
+     }
+
+   m_cache[slot].symbol = sym;
+   m_cache[slot].closedBarTime = rates[copied - 2].time;   // shift=1
+
+   for(int shift = 1; shift <= m_bars; shift++)
+     {
+      const int idx = copied - 1 - shift;
+      if(idx < 0 || shift >= GMD_CS_SHIFT_MAX)
+        {
+         m_cache[slot].filled = false;
+         return(false);
+        }
+      m_cache[slot].open[shift]  = rates[idx].open;
+      m_cache[slot].close[shift] = rates[idx].close;
+     }
+
+   m_cache[slot].filled = true;
+   return(true);
   }
 
 //+------------------------------------------------------------------+
@@ -155,6 +268,8 @@ bool CCurrencyStrength::Init(CAssetDetection *assets,
    m_maxScore  = (CUR_COUNT - 1) * TotalWeight();   // 7 × 重み合計
 
    ClearResults();
+   ClearCache();
+   m_lastLoggedPairs = -1;
 
    if(m_assets == NULL)
      {
@@ -164,17 +279,19 @@ bool CCurrencyStrength::Init(CAssetDetection *assets,
      }
 
    if(m_log != NULL)
-      m_log.Info(StringFormat("CurrencyStrength v2 init: tf=%s bars=%d weight=%s maxScore=%d",
+      m_log.Info(StringFormat("CurrencyStrength v2 init: tf=%s bars=%d weight=%s maxScore=%d cache=on batch=%d",
                               EnumToString(m_tf), m_bars,
-                              (m_useWeight ? "on" : "off"), m_maxScore));
+                              (m_useWeight ? "on" : "off"), m_maxScore,
+                              GMD_CS_LOAD_BATCH));
    return(true);
   }
 
 //+------------------------------------------------------------------+
-//| 計算本体                                                          |
+//| 計算本体（キャッシュ＋段階ロード）                                |
 //+------------------------------------------------------------------+
 bool CCurrencyStrength::Calculate(void)
   {
+   const bool wasReady = m_ready;
    m_ready = false;
 
    if(m_assets == NULL)
@@ -187,33 +304,52 @@ bool CCurrencyStrength::Calculate(void)
      }
 
    int pairsUsed = 0;
+   int freshLoads = 0;     // この呼び出しで新規 CopyRates した回数
 
-   //--- 28ペアを走査
+   //--- 段階ロード: カーソル位置から未取得ペアを優先的に埋める
+   //    1回あたり GMD_CS_LOAD_BATCH 本までに制限し、OnInit をブロックしない
+   int pairIndex = 0;
+
    for(int b = 0; b < CUR_COUNT; b++)
      {
       for(int q = b + 1; q < CUR_COUNT; q++)
         {
+         const int slot = PairSlot(b, q);
          const ENUM_CURRENCY curBase  = (ENUM_CURRENCY)b;
          const ENUM_CURRENCY curQuote = (ENUM_CURRENCY)q;
 
          bool inverted = false;
          const string sym = m_assets.GetFxSymbol(curBase, curQuote, inverted);
          if(sym == "")
+           {
+            pairIndex++;
             continue;
+           }
 
-         //--- チャート以外の銘柄は気配値・ヒストリーが未ロードのことが多い。
-         //    Bars()/iOpen だけだと 1/28 のまま固まるので、Select + CopyRates で取得する。
-         if(!SymbolSelect(sym, true))
+         const bool alreadyFilled = (m_cache[slot].filled && m_cache[slot].symbol == sym);
+         bool ok = false;
+
+         if(alreadyFilled)
+           {
+            // 新バー判定込みの更新（ヒットなら CopyRates なし）
+            ok = EnsurePairCache(sym, slot);
+           }
+         else
+           {
+            // 未取得: バッチ上限内だけ取得を試みる
+            if(freshLoads < GMD_CS_LOAD_BATCH)
+              {
+               ok = EnsurePairCache(sym, slot);
+               if(ok || !m_cache[slot].filled)
+                  freshLoads++;
+              }
+           }
+
+         if(!ok || !m_cache[slot].filled)
+           {
+            pairIndex++;
             continue;
-
-         MqlRates rates[];
-         const int need = m_bars + 1;          // 確定足 m_bars 本 + 形成中1本
-         const int copied = CopyRates(sym, m_tf, 0, need, rates);
-         if(copied < need)
-            continue;
-
-         // rates[0]=最古 … rates[copied-1]=最新（形成中）
-         // 確定足は rates[copied-1-shift] で shift=1 が直近確定
+           }
 
          //--- 銘柄上の base/quote（inverted のときは入れ替わる）
          const ENUM_CURRENCY symBase  = (inverted ? curQuote : curBase);
@@ -223,19 +359,15 @@ bool CCurrencyStrength::Calculate(void)
 
          for(int shift = m_bars; shift >= 1; shift--)
            {
-            const int idx = copied - 1 - shift;
-            if(idx < 0)
-               continue;
-
-            const double o = rates[idx].open;
-            const double c = rates[idx].close;
+            const double o = m_cache[slot].open[shift];
+            const double c = m_cache[slot].close[shift];
 
             if(o <= 0.0 || c <= 0.0)
                continue;
 
             const int w = WeightOf(shift);
 
-            if(c > o)                      // 陽線 = 銘柄の基軸通貨が強い
+            if(c > o)
               {
                m_scoreRaw[symBase] += w;
                if(shift == 1)
@@ -245,7 +377,7 @@ bool CCurrencyStrength::Calculate(void)
                  }
               }
             else
-               if(c < o)                   // 陰線 = 銘柄の決済通貨が強い
+               if(c < o)
                  {
                   m_scoreRaw[symQuote] += w;
                   if(shift == 1)
@@ -254,26 +386,30 @@ bool CCurrencyStrength::Calculate(void)
                      m_momentum[symBase]--;
                     }
                  }
-            //--- 同値は加点しない
 
             usedAnyBar = true;
            }
 
          if(usedAnyBar)
             pairsUsed++;
+
+         pairIndex++;
         }
      }
 
    m_pairsUsed = pairsUsed;
 
-   //--- 最低ペア数に満たなければ計算結果を採用しない
+   //--- 最低ペア数に満たなければ計算結果を採用しない（次回タイマーで再試行）
    if(m_pairsUsed < m_minPairs)
      {
       ClearResults();
       m_pairsUsed = pairsUsed;
-      if(m_log != NULL)
-         m_log.Warn("CS-101", StringFormat("FX pairs available: %d/28 (need %d). Ranking disabled.",
+      if(m_log != NULL && m_pairsUsed != m_lastLoggedPairs)
+        {
+         m_log.Warn("CS-101", StringFormat("FX loading %d/28 (need %d). Ranking wait.",
                                            m_pairsUsed, m_minPairs));
+         m_lastLoggedPairs = m_pairsUsed;
+        }
       return(false);
      }
 
@@ -306,6 +442,11 @@ bool CCurrencyStrength::Calculate(void)
    BuildRanking();
 
    m_ready = true;
+   m_lastLoggedPairs = m_pairsUsed;
+
+   if(!wasReady && m_log != NULL)
+      m_log.Info(StringFormat("CurrencyStrength READY: %d/28 pairs", m_pairsUsed));
+
    return(true);
   }
 

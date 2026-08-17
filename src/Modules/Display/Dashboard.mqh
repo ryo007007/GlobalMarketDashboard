@@ -394,6 +394,7 @@ string CDashboard::BuildRankRow(const int rank)
 string CDashboard::BuildFooterText(void)
   {
    const int used = (m_cs != NULL ? m_cs.GetPairsUsed() : 0);
+   const bool loading = (m_cs != NULL && !m_cs.IsReady());
 
    //--- いま何msで回っているかを常に出す。
    //    可変にした以上、隠すと性能問題の切り分けができなくなる
@@ -402,6 +403,13 @@ string CDashboard::BuildFooterText(void)
       tier = StringFormat("   %dms %s",
                           m_adaptive.GetIntervalMs(),
                           UpdateTierToString(m_adaptive.GetTier()));
+
+   if(loading)
+      return(StringFormat("Loading %d/%d   %s%s",
+                          used,
+                          GMD_FX_PAIR_MAX,
+                          TimeToString(TimeCurrent(), TIME_SECONDS),
+                          tier));
 
    return(StringFormat("%d/%d pairs   %s%s",
                        used,

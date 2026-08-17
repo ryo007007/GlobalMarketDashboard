@@ -235,14 +235,18 @@ int OnInit()
       g_dashboard.Build();
      }
 
-   //--- 4. 初回計算（起動直後に空白のパネルを見せない）
-   CalcAll();
-   UpdateDisplay();
-
-   g_currentTimerMs = g_adaptive.GetIntervalMs();
-   EventSetMillisecondTimer((uint)MathMax(100, g_currentTimerMs));
-
+   //--- 4. タイマーを先に開始する（重要）
+   //    以前は OnInit 内で CalcAll() が終わるまでタイマーが始まらず、
+   //    28×CopyRates の同期待ちで 1 分以上「固まった」ように見えた。
+   //    Dashboard は即表示し、データは OnTimer で段階ロードする。
    g_initialized = true;
+   g_currentTimerMs = 300;   // 初回は短め。揃ったら Adaptive に任せる
+   EventSetMillisecondTimer((uint)g_currentTimerMs);
+
+   //--- 5. 軽い初回更新（ブロックしない範囲）。本計算は直後の OnTimer へ
+   UpdateDisplay();
+   g_logger.Info("GMD ready: timer started, CurrencyStrength will warm up in background.");
+
    return(INIT_SUCCEEDED);
   }
 
