@@ -565,19 +565,34 @@ void CAssetDetection::DetectFxPairs(void)
          int      bars = 0;
          datetime tick = 0;
 
-         if(SymbolExists(direct) && ValidateSymbol(direct, bars, tick) == ASSET_OK)
+         //--- CurrencyStrength は履歴同期を自分で非同期に待つ。
+         //    したがって AssetDetection では「銘柄が存在するか」を確定し、
+         //    ASSET_PENDING でもシンボルをレジストリへ登録する。
+         //    以前は ASSET_OK のときだけ登録していたため、起動直後は
+         //    履歴同期前の 28 ペアがすべて 0/28 になっていた。
+         ENUM_ASSET_STATE directState = ASSET_UNAVAILABLE;
+         if(SymbolExists(direct))
+            directState = ValidateSymbol(direct, bars, tick);
+
+         if(directState == ASSET_OK || directState == ASSET_PENDING)
            {
             m_registry.fxPairs[idx].symbol    = direct;
             m_registry.fxPairs[idx].inverted  = false;
             m_registry.fxPairs[idx].available = true;
            }
          else
-            if(SymbolExists(inverted) && ValidateSymbol(inverted, bars, tick) == ASSET_OK)
+           {
+            ENUM_ASSET_STATE invertedState = ASSET_UNAVAILABLE;
+            if(SymbolExists(inverted))
+               invertedState = ValidateSymbol(inverted, bars, tick);
+
+            if(invertedState == ASSET_OK || invertedState == ASSET_PENDING)
               {
                m_registry.fxPairs[idx].symbol    = inverted;
                m_registry.fxPairs[idx].inverted  = true;
                m_registry.fxPairs[idx].available = true;
               }
+           }
 
          idx++;
         }
