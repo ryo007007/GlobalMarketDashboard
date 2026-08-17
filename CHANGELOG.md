@@ -1,5 +1,19 @@
 # Changelog
 
+## Fix: CurrencyStrength 1/28 pairs on Dashboard (2026-08-17)
+
+### Cause
+- Dashboard の `1/28 pairs` は **AssetDetection が壊れているわけではない**
+- `CurrencyStrength` が `Bars()` / `iOpen` のみで判定しており、**チャート以外の銘柄の M1 ヒストリー未ロード**でほぼ全ペアをスキップしていた
+- 結果 `pairsUsed < minPairs(20)` → `IsReady=false` → ランキング空・Best N/A・Confidence CF-401
+
+### Fix
+- 各 FX ペアで `SymbolSelect(sym, true)` の後、`CopyRates` で確定足を取得
+- 計算ロジック（重み 1:2:3・Momentum=最新確定足）は変更なし
+- Dashboard の白文字ランキング表示はそのまま
+
+---
+
 ## Phase 2-A: Ranking color = white (2026-08-17)
 
 ### Display only (engines untouched)

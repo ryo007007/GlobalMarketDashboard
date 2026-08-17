@@ -201,9 +201,19 @@ bool CCurrencyStrength::Calculate(void)
          if(sym == "")
             continue;
 
-         //--- 必要バー数を満たしているか
-         if(Bars(sym, m_tf) < m_bars + 1)
+         //--- チャート以外の銘柄は気配値・ヒストリーが未ロードのことが多い。
+         //    Bars()/iOpen だけだと 1/28 のまま固まるので、Select + CopyRates で取得する。
+         if(!SymbolSelect(sym, true))
             continue;
+
+         MqlRates rates[];
+         const int need = m_bars + 1;          // 確定足 m_bars 本 + 形成中1本
+         const int copied = CopyRates(sym, m_tf, 0, need, rates);
+         if(copied < need)
+            continue;
+
+         // rates[0]=最古 … rates[copied-1]=最新（形成中）
+         // 確定足は rates[copied-1-shift] で shift=1 が直近確定
 
          //--- 銘柄上の base/quote（inverted のときは入れ替わる）
          const ENUM_CURRENCY symBase  = (inverted ? curQuote : curBase);
@@ -213,10 +223,13 @@ bool CCurrencyStrength::Calculate(void)
 
          for(int shift = m_bars; shift >= 1; shift--)
            {
-            const double o = iOpen(sym, m_tf, shift);
-            const double c = iClose(sym, m_tf, shift);
+            const int idx = copied - 1 - shift;
+            if(idx < 0)
+               continue;
 
-            //--- データ未取得のバーはスキップする（0で計算しない）
+            const double o = rates[idx].open;
+            const double c = rates[idx].close;
+
             if(o <= 0.0 || c <= 0.0)
                continue;
 
