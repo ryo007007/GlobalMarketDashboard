@@ -11,18 +11,18 @@
 //|    ┌────────────────────────────┐                                 |
 //|    │ GLOBAL MARKET DASHBOARD  M1 │  ← タイトル                    |
 //|    ├────────────────────────────┤                                 |
-//|    │ ① USD   72  ↑↑↑            │  ← 1位だけ赤                   |
-//|    │ ② EUR   61  ↑↑             │                                 |
-//|    │  …                          │  ← 2〜7位は白                  |
-//|    │ ⑧ JPY   28  ↓↓↓            │  ← 8位だけ青                   |
+//|    │ ① EUR   71  ↑              │  ← ランキングはすべて白        |
+//|    │ ② CHF   60  ↑              │     （順位・スコア・矢印で読む）│
+//|    │  …                          │                                 |
+//|    │ ⑧ USD    0  ↓↓↓            │                                 |
 //|    ├────────────────────────────┤                                 |
-//|    │ Best   USDJPY  BUY          │                                 |
-//|    │ Confidence 78%  (FX only)   │                                 |
-//|    │ Regime  --  (Ver2.20)       │                                 |
+//|    │ Best   EURUSD  BUY          │                                 |
+//|    │ Confidence 86%  (FX only)   │                                 |
 //|    │ 28/28 pairs   12:34:56      │  ← フッター                    |
 //|    └────────────────────────────┘                                 |
 //|                                                                   |
-//|  色は赤・白・青の3つだけ。増やさない（15.1）。                    |
+//|  ランキング行の色は白固定。GetColor（1位赤/8位青）は使わない。    |
+//|  計算エンジン（CurrencyStrength）は変更しない。                    |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -264,15 +264,10 @@ bool CDashboard::Update(void)
    if(UpdateLabel(CalcObjectName("Title"), BuildTitleText(), m_titleColor))
       changed++;
 
-   //--- ランキング
+   //--- ランキング（色は白固定。順位・数字・矢印で十分伝わる）
    for(int r = 1; r <= CUR_COUNT; r++)
      {
-      color clr = clrGray;
-
-      if(m_cs != NULL && m_cs.IsReady())
-         clr = m_cs.GetColor(m_cs.GetByRank(r));
-
-      if(UpdateLabel(CalcObjectName("Rank", r), BuildRankRow(r), clr))
+      if(UpdateLabel(CalcObjectName("Rank", r), BuildRankRow(r), clrWhite))
          changed++;
      }
 

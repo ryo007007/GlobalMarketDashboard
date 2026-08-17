@@ -1,5 +1,15 @@
 # Changelog
 
+## Phase 2-A: Ranking color = white (2026-08-17)
+
+### Display only (engines untouched)
+
+- `Dashboard.mqh` ランキング行の色を **すべて `clrWhite` に固定**
+- `CurrencyStrength.GetColor()`（1位赤 / 8位青）は計算側に残すが、Dashboard では呼ばない
+- 視認は順位・スコア・矢印で行う（使用感優先）
+
+---
+
 ## Management Layer & Separation (v2.0 Draft)
 
 ### Spec
