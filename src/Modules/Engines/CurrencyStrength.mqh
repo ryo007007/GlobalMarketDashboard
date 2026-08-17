@@ -9,10 +9,11 @@
 //|  方式 : 直近N本の重み付き集計（既定 3本 / 重み 1:2:3）            |
 //|         上昇した足は基軸通貨へ、下降した足は決済通貨へ加点        |
 //|                                                                   |
-//|  データ取得（v2.11 startup/cache fix）                            |
-//|    ・各ペアの OHLC をキャッシュし、新バー時だけ CopyRates         |
-//|    ・1回の Calculate で未取得ペアは最大 BATCH 本まで取得          |
-//|      （起動時に 28 回ブロックしない）                             |
+//|  データ取得（v2.11 warmup fix）                                   |
+//|    1. SymbolSelect だけ先に行い、端末に履歴準備を依頼する         |
+//|    2. Bars が揃ったペアだけ CopyRates（未準備なら待って次回）     |
+//|    3. 同一確定足はキャッシュヒット（毎秒28回の取得をしない）     |
+//|    4. 遅いペアは ms ログで特定できるようにする                    |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -23,18 +24,30 @@
 #include "../Core/Logger.mqh"
 #include "../Core/AssetDetection.mqh"
 
-#define GMD_CS_CACHE_MAX   28
-#define GMD_CS_LOAD_BATCH   8     // 1回の Calculate で新規ロードする上限
-#define GMD_CS_SHIFT_MAX   11
+#define GMD_CS_CACHE_MAX    28
+#define GMD_CS_LOAD_BATCH    4     // 1回の Calculate で CopyRates する上限
+#define GMD_CS_SHIFT_MAX    11
+#define GMD_CS_SLOW_MS     200     // これ以上かかったらログ
+
+//+------------------------------------------------------------------+
+enum ENUM_CS_PAIR_STATE
+  {
+   CS_PAIR_NONE = 0,       // 未処理
+   CS_PAIR_SELECTED,       // Market Watch に追加済み・履歴待ち
+   CS_PAIR_READY,          // OHLC キャッシュ有効
+   CS_PAIR_FAILED          // Select 自体が失敗
+  };
 
 //+------------------------------------------------------------------+
 struct SCsPairCache
   {
-   string   symbol;
-   datetime closedBarTime;        // shift=1 の確定足時刻
-   double   open[GMD_CS_SHIFT_MAX];
-   double   close[GMD_CS_SHIFT_MAX];
-   bool     filled;
+   string            symbol;
+   ENUM_CS_PAIR_STATE state;
+   datetime          closedBarTime;        // shift=1 の確定足時刻
+   double            open[GMD_CS_SHIFT_MAX];
+   double            close[GMD_CS_SHIFT_MAX];
+   bool              filled;               // state==READY と同義
+   uint              lastLoadMs;
   };
 
 //+------------------------------------------------------------------+
@@ -74,6 +87,7 @@ private:
    int               TotalWeight(void) const;
    void              BuildRanking(void);
    int               PairSlot(const int b, const int q) const;
+   bool              RequestPair(const string sym, const int slot);
    bool              EnsurePairCache(const string sym, const int slot);
 
 public:
@@ -153,8 +167,10 @@ void CCurrencyStrength::ClearCache(void)
    for(int i = 0; i < GMD_CS_CACHE_MAX; i++)
      {
       m_cache[i].symbol        = "";
+      m_cache[i].state         = CS_PAIR_NONE;
       m_cache[i].closedBarTime = 0;
       m_cache[i].filled        = false;
+      m_cache[i].lastLoadMs    = 0;
       for(int s = 0; s < GMD_CS_SHIFT_MAX; s++)
         {
          m_cache[i].open[s]  = 0.0;
@@ -178,22 +194,65 @@ int CCurrencyStrength::PairSlot(const int b, const int q) const
   }
 
 //+------------------------------------------------------------------+
-//| キャッシュを必要時だけ更新する。成功で true。                     |
-//|  ・同一確定足なら CopyRates しない（毎秒28回を防ぐ）              |
-//|  ・未取得時のみ呼び出し側がバッチ制限する                         |
+//| ペアを Market Watch に載せるだけ（CopyRates はしない）            |
+//|  端末に「この銘柄の履歴を用意して」と依頼する段階                  |
+//+------------------------------------------------------------------+
+bool CCurrencyStrength::RequestPair(const string sym, const int slot)
+  {
+   if(slot < 0 || slot >= GMD_CS_CACHE_MAX || sym == "")
+      return(false);
+
+   m_cache[slot].symbol = sym;
+
+   if(!SymbolSelect(sym, true))
+     {
+      m_cache[slot].state  = CS_PAIR_FAILED;
+      m_cache[slot].filled = false;
+      if(m_log != NULL)
+         m_log.Warn("CS-104", "SymbolSelect failed: " + sym);
+      return(false);
+     }
+
+   if(m_cache[slot].state == CS_PAIR_NONE || m_cache[slot].state == CS_PAIR_FAILED)
+      m_cache[slot].state = CS_PAIR_SELECTED;
+
+   return(true);
+  }
+
+//+------------------------------------------------------------------+
+//| 履歴が揃っているときだけ CopyRates。未準備なら false（待ち）      |
+//|  ・同一確定足なら再取得しない                                     |
+//|  ・遅いペアは ms をログに残す                                     |
 //+------------------------------------------------------------------+
 bool CCurrencyStrength::EnsurePairCache(const string sym, const int slot)
   {
    if(slot < 0 || slot >= GMD_CS_CACHE_MAX || sym == "")
       return(false);
 
-   if(!SymbolSelect(sym, true))
+   if(m_cache[slot].state == CS_PAIR_FAILED)
+      return(false);
+
+   //--- まだ Select していなければここで依頼のみ（この呼び出しでは Copy しない）
+   if(m_cache[slot].state == CS_PAIR_NONE)
      {
-      m_cache[slot].filled = false;
+      RequestPair(sym, slot);
       return(false);
      }
 
-   //--- キャッシュヒット: 直近確定足の時刻が同じなら再取得しない
+   if(m_cache[slot].state == CS_PAIR_SELECTED || m_cache[slot].symbol != sym)
+     {
+      if(!RequestPair(sym, slot))
+         return(false);
+     }
+
+   const int need = m_bars + 1;
+
+   //--- 履歴本数が足りなければ CopyRates せず待つ（ブロック回避の核心）
+   const int barsNow = Bars(sym, m_tf);
+   if(barsNow < need)
+      return(false);
+
+   //--- キャッシュヒット
    const datetime t1 = iTime(sym, m_tf, 1);
    if(m_cache[slot].filled &&
       m_cache[slot].symbol == sym &&
@@ -201,17 +260,24 @@ bool CCurrencyStrength::EnsurePairCache(const string sym, const int slot)
       m_cache[slot].closedBarTime == t1)
       return(true);
 
+   const bool firstFill = (m_cache[slot].state != CS_PAIR_READY);
+   const uint t0 = GetTickCount();
    MqlRates rates[];
-   const int need = m_bars + 1;
    const int copied = CopyRates(sym, m_tf, 0, need, rates);
+   const uint elapsed = GetTickCount() - t0;
+   m_cache[slot].lastLoadMs = elapsed;
+
    if(copied < need)
      {
       m_cache[slot].filled = false;
+      if(m_log != NULL && elapsed >= GMD_CS_SLOW_MS)
+         m_log.Warn("CS-105", StringFormat("%s CopyRates incomplete (%d/%d) %u ms",
+                                           sym, copied, need, elapsed));
       return(false);
      }
 
    m_cache[slot].symbol = sym;
-   m_cache[slot].closedBarTime = rates[copied - 2].time;   // shift=1
+   m_cache[slot].closedBarTime = rates[copied - 2].time;
 
    for(int shift = 1; shift <= m_bars; shift++)
      {
@@ -226,6 +292,20 @@ bool CCurrencyStrength::EnsurePairCache(const string sym, const int slot)
      }
 
    m_cache[slot].filled = true;
+   m_cache[slot].state  = CS_PAIR_READY;
+
+   // 初回ロードと遅い取得だけログ（毎分の新バー更新では出さない）
+   if(m_log != NULL && (firstFill || elapsed >= GMD_CS_SLOW_MS))
+     {
+      if(elapsed >= GMD_CS_SLOW_MS)
+         m_log.Warn("CS-106", StringFormat("%s %s %u ms (bars=%d)",
+                                           sym,
+                                           (firstFill ? "READY slow" : "refresh slow"),
+                                           elapsed, barsNow));
+      else
+         m_log.Info(StringFormat("[CS-LOAD] %s READY %u ms", sym, elapsed));
+     }
+
    return(true);
   }
 
@@ -304,12 +384,26 @@ bool CCurrencyStrength::Calculate(void)
      }
 
    int pairsUsed = 0;
-   int freshLoads = 0;     // この呼び出しで新規 CopyRates した回数
+   int copyAttempts = 0;   // この呼び出しで CopyRates を試みた回数
 
-   //--- 段階ロード: カーソル位置から未取得ペアを優先的に埋める
-   //    1回あたり GMD_CS_LOAD_BATCH 本までに制限し、OnInit をブロックしない
-   int pairIndex = 0;
+   //--- Phase A: 全ペアを SymbolSelect（CopyRates なし）
+   //    端末に履歴ダウンロードを並列で依頼する
+   for(int b = 0; b < CUR_COUNT; b++)
+     {
+      for(int q = b + 1; q < CUR_COUNT; q++)
+        {
+         const int slot = PairSlot(b, q);
+         bool inverted = false;
+         const string sym = m_assets.GetFxSymbol((ENUM_CURRENCY)b, (ENUM_CURRENCY)q, inverted);
+         if(sym == "")
+            continue;
+         if(m_cache[slot].state == CS_PAIR_NONE)
+            RequestPair(sym, slot);
+        }
+     }
 
+   //--- Phase B: 履歴が揃ったペアだけ取得・スコア加算
+   //    Bars < need のペアはスキップ（待って次回）。CopyRates は BATCH 上限
    for(int b = 0; b < CUR_COUNT; b++)
      {
       for(int q = b + 1; q < CUR_COUNT; q++)
@@ -321,35 +415,29 @@ bool CCurrencyStrength::Calculate(void)
          bool inverted = false;
          const string sym = m_assets.GetFxSymbol(curBase, curQuote, inverted);
          if(sym == "")
-           {
-            pairIndex++;
             continue;
-           }
 
-         const bool alreadyFilled = (m_cache[slot].filled && m_cache[slot].symbol == sym);
          bool ok = false;
 
-         if(alreadyFilled)
+         if(m_cache[slot].filled && m_cache[slot].symbol == sym)
            {
-            // 新バー判定込みの更新（ヒットなら CopyRates なし）
+            // 新バー時のみ再取得（ヒットなら CopyRates なし）
             ok = EnsurePairCache(sym, slot);
            }
          else
-           {
-            // 未取得: バッチ上限内だけ取得を試みる
-            if(freshLoads < GMD_CS_LOAD_BATCH)
+            if(m_cache[slot].state != CS_PAIR_FAILED)
               {
-               ok = EnsurePairCache(sym, slot);
-               if(ok || !m_cache[slot].filled)
-                  freshLoads++;
+               // 未 READY: 履歴本数が揃っているものだけ CopyRates
+               const int barsNow = Bars(sym, m_tf);
+               if(barsNow >= m_bars + 1 && copyAttempts < GMD_CS_LOAD_BATCH)
+                 {
+                  copyAttempts++;
+                  ok = EnsurePairCache(sym, slot);
+                 }
               }
-           }
 
          if(!ok || !m_cache[slot].filled)
-           {
-            pairIndex++;
             continue;
-           }
 
          //--- 銘柄上の base/quote（inverted のときは入れ替わる）
          const ENUM_CURRENCY symBase  = (inverted ? curQuote : curBase);

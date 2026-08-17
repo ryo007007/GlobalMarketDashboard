@@ -1,5 +1,22 @@
 # Changelog
 
+## CurrencyStrength Warmup: request vs copy (2026-08-17)
+
+### Problem
+初回 28 ペアの `CopyRates` が履歴未準備のまま同期待ちし、合計で 1 分以上かかることがある。
+
+### Approach（計算ロジックは変更しない）
+1. **Phase A** — 全ペア `SymbolSelect` のみ（端末に履歴準備を依頼）
+2. **Phase B** — `Bars >= need` のペアだけ `CopyRates`（未準備はスキップして次回）
+3. 1回あたり CopyRates 上限 **4** 本
+4. 同一確定足はキャッシュヒット
+5. ペアごとの所要時間ログ: `[CS-LOAD] EURUSD READY 12 ms` / 遅い場合 `CS-106`
+
+### Files
+- `CurrencyStrength.mqh` only（Dashboard / ranking 式は据え置き）
+
+---
+
 ## CurrencyStrength Startup / Cache Fix (2026-08-17)
 
 ### Symptoms fixed
