@@ -34,6 +34,7 @@
 #include "../Core/Logger.mqh"
 #include "DrawObjects.mqh"
 #include "../Engines/CurrencyStrength.mqh"
+#include "../Engines/StrengthGap.mqh"
 #include "../Engines/BestPair.mqh"
 #include "../Engines/Confidence.mqh"
 #include "../Engines/AnomalyEngine.mqh"
@@ -46,6 +47,7 @@ class CDashboard
   {
 private:
    CCurrencyStrength *m_cs;
+   CStrengthGap      *m_strengthGap;
    CBestPair         *m_bestPair;
    CConfidence       *m_confidence;
    CAnomalyEngine    *m_anomaly;        // 任意。NULLなら行を出さない
@@ -87,6 +89,7 @@ public:
                           CConfidence *confidence,
                           CLogger *logger);
 
+   void              SetStrengthGap(CStrengthGap *strengthGap) { m_strengthGap = strengthGap; }
    void              SetAnomaly(CAnomalyEngine *anomaly)   { m_anomaly  = anomaly; }
    void              SetEnergy(CEnergyEngine *energy)      { m_energy   = energy; }
    void              SetClock(CSessionClock *clock)        { m_clock    = clock; }
@@ -106,6 +109,7 @@ public:
 
 //+------------------------------------------------------------------+
 CDashboard::CDashboard(void) : m_cs(NULL),
+                               m_strengthGap(NULL),
                                m_bestPair(NULL),
                                m_confidence(NULL),
                                m_anomaly(NULL),
@@ -188,15 +192,16 @@ bool CDashboard::Build(void)
    //   2  〜 9  : ランキング8行
    //   10       : 区切り
    //   11       : Best Pair
-   //   12       : Confidence
-   //   13       : Anomaly
-   //   14       : Season（リスク志向バイアス）
-   //   15       : Energy（圧縮）
-   //   16       : 区切り
-   //   17       : Session（開いている市場 / 次の開始まで）
-   //   18       : Regime（Ver2.20の枠）
-   //   19       : フッター（更新間隔の段を含む）
-   const int totalRows   = 20;
+   //   12       : Strength Gap
+   //   13       : Confidence
+   //   14       : Anomaly
+   //   15       : Season（リスク志向バイアス）
+   //   16       : Energy（圧縮）
+   //   17       : 区切り
+   //   18       : Session（開いている市場 / 次の開始まで）
+   //   19       : Regime（Ver2.20の枠）
+   //   20       : フッター（更新間隔の段を含む）
+   const int totalRows   = 21;
    const int panelHeight = 16 + totalRows * m_rowHeight;
 
    DrawPanel(CalcObjectName("Panel"), m_x, m_y,
@@ -221,28 +226,31 @@ bool CDashboard::Build(void)
    DrawLabel(CalcObjectName("BestPair"), tx, RowY(11),
              "Best  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Confidence"), tx, RowY(12),
+   DrawLabel(CalcObjectName("StrengthGap"), tx, RowY(12),
+             "Strength Gap  --", clrGray, m_fontSize, m_font, m_corner);
+
+   DrawLabel(CalcObjectName("Confidence"), tx, RowY(13),
              "Confidence  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Anomaly"), tx, RowY(13),
+   DrawLabel(CalcObjectName("Anomaly"), tx, RowY(14),
              "Anomaly  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Season"), tx, RowY(14),
+   DrawLabel(CalcObjectName("Season"), tx, RowY(15),
              "Season  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Energy"), tx, RowY(15),
+   DrawLabel(CalcObjectName("Energy"), tx, RowY(16),
              "Energy  --------  --", clrGray, m_fontSize, m_font, m_corner);
 
-   DrawSeparator(CalcObjectName("Sep3"), m_x + 8, RowY(16) + 6,
+   DrawSeparator(CalcObjectName("Sep3"), m_x + 8, RowY(17) + 6,
                  m_panelWidth - 16, m_borderColor, m_corner);
 
-   DrawLabel(CalcObjectName("Session"), tx, RowY(17),
+   DrawLabel(CalcObjectName("Session"), tx, RowY(18),
              "Session  --", m_subColor, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Regime"), tx, RowY(18),
+   DrawLabel(CalcObjectName("Regime"), tx, RowY(19),
              "Regime  --  [2.20]", m_subColor, m_fontSize, m_font, m_corner);
 
-   DrawLabel(CalcObjectName("Footer"), tx, RowY(19),
+   DrawLabel(CalcObjectName("Footer"), tx, RowY(20),
              BuildFooterText(), m_subColor, m_fontSize - 1, m_font, m_corner);
 
    m_built = true;
@@ -277,6 +285,16 @@ bool CDashboard::Update(void)
       const string txt = "Best  " + m_bestPair.GetDisplayText();
 
       if(UpdateLabel(CalcObjectName("BestPair"), txt, m_bestPair.GetColor()))
+         changed++;
+     }
+
+   //--- Strength Gap
+   if(m_strengthGap != NULL)
+     {
+      const string gapText = m_strengthGap.BuildText();
+      const color gapColor = (m_strengthGap.IsReady() ? clrWhite : clrGray);
+
+      if(UpdateLabel(CalcObjectName("StrengthGap"), gapText, gapColor))
          changed++;
      }
 

@@ -37,6 +37,7 @@
 
 //--- Engines
 #include "Modules/Engines/CurrencyStrength.mqh"
+#include "Modules/Engines/StrengthGap.mqh"
 #include "Modules/Engines/BestPair.mqh"
 #include "Modules/Engines/Confidence.mqh"
 #include "Modules/Engines/AnomalyEngine.mqh"
@@ -117,6 +118,7 @@ CLogger           g_logger;
 CAssetDetection   g_assets;
 
 CCurrencyStrength g_strength;
+CStrengthGap      g_strengthGap;
 CBestPair         g_bestPair;
 CConfidence       g_confidence;
 CAnomalyEngine    g_anomaly;
@@ -167,6 +169,9 @@ int OnInit()
                    Inp_StrengthBars,
                    Inp_UseWeighting,
                    Inp_StrengthMinPairs);
+
+   //--- Strength Gap: CurrencyStrength の Strongest / Weakest Score の差
+   g_strengthGap.Init(GetPointer(g_strength));
 
    g_bestPair.Init(GetPointer(g_strength), GetPointer(g_assets),
                    GetPointer(g_logger), Inp_BestPairMinSpread);
@@ -221,6 +226,8 @@ int OnInit()
                        GetPointer(g_bestPair),
                        GetPointer(g_confidence),
                        GetPointer(g_logger));
+
+      g_dashboard.SetStrengthGap(GetPointer(g_strengthGap));
 
       if(Inp_EnableAnomaly)
          g_dashboard.SetAnomaly(GetPointer(g_anomaly));
@@ -339,7 +346,11 @@ void CalcAll()
    const uint t0 = GetTickCount();
 
    if(Inp_EnableStrength)
+     {
       g_strength.Calculate();
+      //--- StrengthGap は Strength が READY のときだけ値を確定する
+      g_strengthGap.Calculate();
+     }
 
    if(Inp_EnableAnomaly)
       g_anomaly.Calculate();
