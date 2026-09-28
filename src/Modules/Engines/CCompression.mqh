@@ -324,8 +324,8 @@ public:
       return(true);
      }
 
-   bool IsReady() const { return(m_ready && m_available); }
-   string GetName() const { return("Compression"); }
+   bool IsReady() { return(m_ready && m_available); }
+   string GetName()  { return("Compression"); }
    bool IsAvailable() const { return(m_available); }
 
    ENUM_COMPRESSION_STATE GetState() const { return(m_state); }

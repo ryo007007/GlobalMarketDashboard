@@ -4,7 +4,7 @@
 //| CCompression 単体テスト用インジケーター                         |
 //+------------------------------------------------------------------+
 #property copyright "Global Market Dashboard Ultimate"
-#property version   "0.100"
+#property version   "1.000"
 #property description "CCompression Engine standalone test indicator"
 #property indicator_chart_window
 #property indicator_plots 0
@@ -51,7 +51,9 @@ int OnCalculate(const int rates_total,
 
    const datetime current_d1_bar=d1[0].time;
 
-   if(g_last_d1_bar==0 || current_d1_bar!=g_last_d1_bar)
+   if(g_last_d1_bar==0 ||
+   current_d1_bar!=g_last_d1_bar ||
+   !g_compression.IsAvailable())
      {
       g_last_d1_bar=current_d1_bar;
 
