@@ -273,7 +273,7 @@ int OnCalculate(const int rates_total,
       "\n",
 
       StringFormat(
-         "ATR%%       : %.3f%%   Percentile: %.1f   Score: %d/2",
+         "ATR         : %.3f%%   Percentile: %.1f   Score: %d/2",
 
          g_compression.GetATRPercent(),
 
@@ -285,7 +285,7 @@ int OnCalculate(const int rates_total,
       "\n",
 
       StringFormat(
-         "BB Width%%  : %.3f%%   Percentile: %.1f   Score: %d/2",
+         "BB Width    : %.3f%%   Percentile: %.1f   Score: %d/2",
 
          g_compression.GetBBWidth(),
 
@@ -297,7 +297,7 @@ int OnCalculate(const int rates_total,
       "\n",
 
       StringFormat(
-         "Range20%%   : %.3f%%   Percentile: %.1f   Score: %d/2",
+         "Range20     : %.3f%%   Percentile: %.1f   Score: %d/2",
 
          g_compression.GetRange20Percent(),
 
