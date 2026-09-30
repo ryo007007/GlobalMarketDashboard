@@ -95,6 +95,9 @@ Market Regime との整合性を優先する。
 | Period | ADX(14) |
 | 判定方式 | Percentile ではなく**絶対値**を使用 |
 
+ADXについてはATR等と違って、Percentileではなく絶対値から開始します。  
+ADXはCompressionの必須条件ではなく、トレンド強度を評価する補助スコアとして使用する。
+
 ### Score
 | ADX値     | Score |
 |-----------|-------|
