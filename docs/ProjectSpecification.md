@@ -7,10 +7,10 @@
 | Language | MQL5 |
 | Repository | GlobalMarketDashboard |
 | Current Version | 2.11 Ultimate (Development) |
-| Document Version | Project Specification **v2.0 Draft** |
+| Document Version | Project Specification **v1.7** |
 | Author | Ryoutarou Kadono |
 | Status | In Development（実装フェーズ / Ver2.11 着手中） |
-| Last Update | 2026-08-06 |
+| Last Update | 2026-10-05 |
 
 > **本書の位置づけ**：本書はGMDの単一の正（Single Source of Truth）である。実装・レビュー・将来の機能追加は、すべて本書を起点とする。
 >
@@ -44,6 +44,19 @@
 29. Class Diagram　30. Data Flow　31. Error Handling
 32. Performance Benchmark　33. Release Checklist
 34. Known Limitations　35. ドキュメント体系とリポジトリ構成
+
+**Part VII — 制御・状態・通知（Ver2.11〜2.30）**
+36. Adaptive Update Engine　37. Energy Engine
+38. Market State Engine [2.30]　39. Alert Engine [2.30]
+40. Price Level Engine [2.20+]　41. Pivot Engine [2.20+]
+42. Market Structure Engine [2.30+]　43. Today's Setup [3.00]
+44. Engine Manager / Alert Manager　45. Bollinger Engine / Cycle Engine（予約）
+
+**Part VIII — 将来拡張（Ver4.00+）**
+46. NISA / Investment Advisor Engine [4.00+]
+
+**付録**
+A. AssetDetection.mqh 実装スケルトン　B. 共通データ構造リファレンス
 
 **Part VII — 制御・状態・通知（Ver2.11〜2.30）**
 36. Adaptive Update Engine　37. Energy Engine
@@ -1564,7 +1577,7 @@ GMDの目的は一瞬で資金の流れを判断することである。多段�
 | Project Specification **v1.4a** | **10.13「リスク志向バイアス」を新設**。株の季節性からリスク志向を導く関係を認めつつ、FXスコアには加算せず独立した文脈値（`GetRiskBiasScore()`、±5、株スコアの1/2）として実装する根拠を明記。ダッシュボードに `Season` 行を追加。Market Regime[2.20] が季節性を消費する際の重み上限（Risk Score全体の10%以内）を規定。27.0に S7、34章に L15 を追加 |
 | Project Specification **v1.5** | **Part VII（36〜39章）を新設**。**36. Adaptive Update Engine** — 更新間隔を3段（Idle 2000 / Normal 1000 / Alert 300ms）で可変化。セッションを**現地時刻**で定義し、欧州・米国・豪州の夏時間を**独立に**計算（年3週間の欧米ずれに対応）。ニューヨークのセッション開始を指標発表に合わせ **08:30 ET** と定義。速くする方向のみ滞留時間を免除する非対称ヒステリシスを規定。**37. Energy Engine** — 圧縮の蓄積を3軸（圧縮50/無方向30/参加20）の**パーセンタイル順位**で数値化。ATRとBB幅は加算せず min を取る。0〜100を「%」と呼ばないことを明記。状態機械 NORMAL→BUILDING→LOADED→**RELEASED** を定め、赤はRELEASEDのみ。材料不足は `ENERGY_UNAVAILABLE` で 0 を返さない。**38. Market State Engine [2.30]** — 状態を観測可能な4つ（Quiet / Building / Expansion / Trending）に限定し、Exhaustion / Reversal は事後ラベルとしてVer3.00で検討。**39. Alert Engine [2.30]** — 水準ではなく遷移で発火。エッジ検出・ヒステリシス・冷却をEngine内部に集約。既定チャネルはパネル+Printのみ。エラーコードに `EN`(801-899) / `SC`(851) / `AU`(861) / `MS`(871-872) / `AL`(881-882) を追加。18章のツリー、21.3〜21.5、27.0のS8〜S10、34章のL16〜L19 を追加 |
 | Project Specification **v1.6 Draft** | **構造整理フェーズ**。`Interfaces/` を新設し、`IEngine` を `Core/Types.mqh` から分離。`Core/Constants.mqh` を追加してマジックナンバーを集約。`Core/Config.mqh` を追加し、入力パラメータを将来的に構造体へ寄せる受け皿を用意。`Core/SymbolCache.mqh` を追加して AssetDetection の L2 キャッシュ境界を明示。`Core/SessionManager.mqh` を追加し、`SessionClock` から将来のセッション統括へ拡張する余地を確保。`README.md` / `Architecture.md` / 18章 / 29.4 / 30章 / 35.1 / 35.4 を現行構成に同期し、ファイル名と実装範囲の不一致を是正 |
-
+| Project Specification **v1.7** | **46章 NISA / Investment Advisor Engine [4.00+] を新設**。GMDの「世界のお金の流れを見る」コンセプトをNISA・投資信託の判断材料へ接続する将来機能として仕様を先行定義。4層構造（市場データ→GMD分析→投資商品データ→Advisor）、表示例、基本思想（断定しない・理由を明示）、ロードマップ上の位置づけ（Ver4.00）を明記。24章・25章を更新。目次に Part VIII を追加。Last Update を 2026-10-05 に更新 |
 ---
 
 ## 18. モジュール構成（System Modules Architecture）
@@ -1754,7 +1767,6 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 - グローバル変数（MT5の`GlobalVariable`）を使う場合は、プレフィックスにインジケーター名＋バージョンを含め、他のインジケーターとの衝突を避ける
 
 ---
-
 ## 24. 将来的な分析エンジン（Future Analytics Engine）
 
 - 統計分析（相関・クラスタリング）
@@ -1762,6 +1774,7 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 - Money Rotation（資金循環）分析
 - Correlation Engine（相関エンジン）
 - Probability / Recommendation（確率・推奨）
+- **NISA / Investment Advisor Engine**（46章）— 世界の資金フロー・市場状態をNISA・投資信託の判断材料へ接続する機能。Ver4.00 で Portfolio Analysis と合わせて実装予定
 
 ---
 
@@ -1773,7 +1786,7 @@ XAUUSD → GOLD → GOLDmicro → XAUUSD.r
 | Ver2.20 | Money Flow / Market Regime / MoneyFlowPanel + **AssetDetection の L2キャッシュ / Retry / Stale / 高度なAvailability** + 対象資産6種追加（GER40 / UK100 / US10Y / US30Y / DXY / VIX） |
 | Ver2.30 | Market Open / Economic Events / Display Mode |
 | Ver3.00 | Flow Analysis / Correlation Engine / Bond Analysis |
-| Ver4.00 | Analytics Engine / Prediction / Portfolio Analysis |
+| Ver4.00 | Analytics Engine / Prediction / **Portfolio Analysis / NISA・Investment Advisor Engine** |
 
 ### 25.1 Ver2.11 の完成定義（Definition of Done）
 
@@ -4364,7 +4377,55 @@ Market Structure
 
 仕様を増やすことと、コードを書くことを混同しない（0.3）。
 
----
+---## 46. NISA / Investment Advisor Engine [4.00+]
+
+> **実装フェーズ**: Ver 4.00 付近（Portfolio Analysis / Investment Advisor）  
+> **現状**: 仕様のみ先行定義。現時点では実装しない。  
+> **位置づけ**: GMDのコンセプト「世界のお金の流れを見る」を、最終的に「自分のNISA・投資信託の判断につなげる」ところまで拡張する将来機能。
+
+### 46.1 Purpose
+
+GMDが分析する世界の資金フロー、市場レジーム、ボラティリティ（Compression / Energy）、リスク状態等を統合し、NISA・投資信託などの**長期投資における「購入・継続・待機・縮小」の判断材料を提供する**。
+
+本機能は「買い／売り」を断定する自動売買シグナルではなく、**投資判断を支援する材料提示エンジン**である。
+
+### 46.2 基本思想
+
+- GMDは市場の方向を**単一指標で予測しない**
+- Currency Strength / Money Flow / Market Regime / Compression（Energy） / Risk Score / Confidence などを**総合評価**する
+- 判断理由を必ず表示し、ブラックボックス化しない
+- 「絶対に買う／売る」という断定は行わず、**投資判断を支援する**
+- 長期積立と短期的な市場変動を明確に区別する
+- 「売れ！」と断定するのではなく、「なぜそう判断したのか」を説明する
+- CCompression / Energy Engine の思想（方向を出さず、状態変化を観測する）と高い親和性を持つ
+
+### 46.3 アーキテクチャ（4層構造）
+
+```text
+① 市場データ層
+   ├── 株式・債券・金・為替・暗号資産
+
+② GMD分析層
+   ├── Money Flow
+   ├── Market Regime
+   ├── Compression / Energy
+   ├── Currency Strength
+   ├── Risk Score
+   └── Confidence
+
+③ 投資商品データ層
+   ├── 楽天証券などで取り扱っている商品情報
+   ├── NISA対象かどうか
+   ├── 商品分類（全世界株式 / 先進国 / 新興国 / 債券 / バランス 等）
+   ├── 信託報酬
+   ├── 商品特性
+   └── 基準価額など
+
+④ Investment Advisor層
+   ├── BUY
+   ├── HOLD / 積立継続
+   ├── WAIT
+   └── REDUCE
 
 ## 付録A. `Core/AssetDetection.mqh` 実装スケルトン
 
