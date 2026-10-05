@@ -4377,7 +4377,7 @@ Market Structure
 
 仕様を増やすことと、コードを書くことを混同しない（0.3）。
 
----## 46. NISA / Investment Advisor Engine [4.00+]
+## 46. NISA / Investment Advisor Engine [4.00+]
 
 > **実装フェーズ**: Ver 4.00 付近（Portfolio Analysis / Investment Advisor）  
 > **現状**: 仕様のみ先行定義。現時点では実装しない。  
@@ -4426,6 +4426,115 @@ GMDが分析する世界の資金フロー、市場レジーム、ボラティ�
    ├── HOLD / 積立継続
    ├── WAIT
    └── REDUCE
+```
+
+GMD内部計算だけで勝手に商品名を生成することはしない。必ず実在する投資商品データと連携する。
+
+### 46.4 表示例
+
+#### メインパネル例
+
+```text
+━━━━━━━━━━━━━━━━━━
+ NISA / 投資信託 STATUS
+━━━━━━━━━━━━━━━━━━
+今月の投資環境
+  Risk ON        78%
+  Market Regime  強気
+  Compression    NORMAL
+  Money Flow     株式 ↑
+  USD            ↓
+  GOLD           ↓
+
+【今月の判断】
+🟢 積立継続
+🟢 追加購入候補
+🟡 通常購入
+🔴 今回は購入を急がない
+```
+
+#### 購入候補表示例
+
+```text
+【購入候補】
+① eMAXIS Slim 全世界株式
+   判定：BUY / 積立継続
+   Confidence：82%
+
+② ○○○○
+   判定：BUY
+   Confidence：76%
+
+③ ○○○○
+   判定：WAIT
+   Confidence：54%
+```
+
+#### 売却・縮小候補表示例
+
+```text
+【売却・縮小候補】
+① ○○○○
+   判定：REDUCE
+   理由：
+   ・Market Regime悪化
+   ・Money Flow流出
+   ・リスクOFF
+```
+
+売却については特に慎重に扱い、「断定」ではなく「検討材料」として提示する。
+
+### 46.5 入力（将来想定）
+
+| 入力元 | 内容 |
+|--------|------|
+| Market Regime Engine | Risk ON / OFF / Neutral および強度 |
+| Money Flow Engine | 株式・債券・金・現金などへの資金フロー |
+| Energy / CCompression | 各市場の Compression 状態・Score・Delta・Age |
+| Currency Strength | 主要通貨の強弱 |
+| Confidence Engine | 各判断の信頼度 |
+| 外部商品データ | 楽天証券等の投資信託・ETF情報（NISA対象、信託報酬、分類など） |
+
+### 46.6 出力
+
+| 項目 | 内容 |
+|------|------|
+| 今月の投資環境サマリー | Risk ON率、Market Regime、主要Money Flow、主要通貨・GOLDの方向感 |
+| 購入候補リスト | 商品名、判定（BUY / HOLD / WAIT）、Confidence、簡単な理由 |
+| 縮小・売却検討リスト | 商品名、判定（REDUCE）、理由（複数エンジンからの根拠） |
+| 全体判断 | 積立継続 / 追加購入候補 / 通常購入 / 購入を急がない などの総合ステータス |
+
+### 46.7 開発ロードマップ上の位置づけ
+
+- **Ver 2.11** → Currency Strength / Best Pair / Dashboard / Confidence
+- **Ver 2.20** → Money Flow / Market Regime / Asset Detection
+- **Ver 2.30** → Market Open / Economic Events / Display Mode
+- **Ver 3.00** → Flow Analysis / Correlation Engine / Bond Analysis
+- **Ver 4.00** → Analytics / Prediction / **Portfolio Analysis / Investment Advisor（本機能）**
+
+**今は仕様として追加し、実装は後回しにする。**
+
+CCompression / Energy → Market Regime → Money Flow → Confidence → Investment Advisor  
+という流れの一部として、現在のCCompression検証結果（例: GOLDのSTRONG COMPRESSION）も将来の判断材料となる。
+
+### 46.8 注意事項・制約
+
+- 本機能は投資助言ではなく、**判断材料の提供**に留める
+- 商品データの取得・更新方法（API / 手動更新 / 外部データソース）は別途検討が必要
+- 楽天証券以外の証券会社への拡張も将来的に考慮する
+- 長期積立を基本とし、短期トレード推奨には使用しない
+- ユーザーが自分で最終判断できるよう、必ず理由を併記する
+- 「売れ！」という断定表現は禁止し、必ず根拠を複数エンジンから提示する
+
+### 46.9 Future Expansion
+
+- 複数証券会社対応
+- ユーザーの保有ポートフォリオとの連動（保有銘柄のモニタリング）
+- 積立シミュレーション機能
+- 過去のGMD判断と実際のパフォーマンスの振り返り機能（Confidence向上のため）
+- 信託報酬・実質コストを考慮した候補の優先順位付け
+
+---
 
 ## 付録A. `Core/AssetDetection.mqh` 実装スケルトン
 
