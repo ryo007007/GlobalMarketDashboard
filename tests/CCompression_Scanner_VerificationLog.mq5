@@ -41,6 +41,7 @@ input group "=== 検証ログ設定 ==="
 input bool InpEnableVerificationLog = true; // 検証ログを出力する(true/false)
 input bool InpLogStateChanges       = true; // 圧縮状態の変化も記録する
 input int  InpTransitionMeasureBars = 12;   // TRANSITION発生後、最大値幅を計測する確定足数
+input int  InpTransitionDisplayHoldBars = 3; // TRANSITION判定後、一覧表示を保持する確定足数
 
 input group "=== 解説パネル(現在のチャートの通貨・時間足) ==="
 input bool ShowDetailPanel = true;               // 解説パネルを表示する
@@ -95,6 +96,7 @@ struct CCOMP_VerificationEvent
    int      startScore;
   };
 CCOMP_VerificationEvent g_verification[];
+int g_transitionHoldRemaining[]; // TRANSITION表示保持の残り確定足数
 
 void DrawDetailPanel();   // 解説パネル描画(定義はファイル末尾)
 
@@ -140,6 +142,36 @@ color CCOMP_StateColor(const CCOMP_STATE st)
 string GVKey(const int i, const string field)
   {
    return "CCOMP_" + field + "_" + g_scan[i].symbol + "_" + IntegerToString(PeriodSeconds(g_scan[i].tf));
+  }
+
+// TRANSITIONの表示保持状態を端末グローバル変数に保存する。
+void SaveTransitionHoldState(const int i)
+  {
+   string key = GVKey(i, "TH");
+   if(g_transitionHoldRemaining[i] > 0)
+      GlobalVariableSet(key, (double)g_transitionHoldRemaining[i]);
+   else if(GlobalVariableCheck(key))
+      GlobalVariableDel(key);
+  }
+
+void LoadTransitionHoldStates()
+  {
+   for(int i = 0; i < g_scanTotal; i++)
+     {
+      string key = GVKey(i, "TH");
+      if(GlobalVariableCheck(key))
+         g_transitionHoldRemaining[i] = (int)GlobalVariableGet(key);
+      if(g_transitionHoldRemaining[i] < 0)
+         g_transitionHoldRemaining[i] = 0;
+     }
+  }
+
+// 実際のエンジン状態は変更せず、一覧表示用にTRANSITIONだけ保持する。
+CCOMP_STATE DisplayStateForRow(const int i)
+  {
+   if(g_scan[i].state == CCOMP_TRANSITION || g_transitionHoldRemaining[i] > 0)
+      return CCOMP_TRANSITION;
+   return g_scan[i].state;
   }
 
 void SaveSpikeState(const int i)
@@ -454,6 +486,7 @@ int OnInit()
    ArrayResize(g_suppressed, g_scanTotal);
    ArrayResize(g_spikeWasDetected, g_scanTotal);
    ArrayResize(g_verification, g_scanTotal);
+   ArrayResize(g_transitionHoldRemaining, g_scanTotal);
    for(int k = 0; k < g_scanTotal; k++)
      {
       g_spikeUntil[k] = 0;
@@ -462,6 +495,7 @@ int OnInit()
       g_spikeZ[k]     = 0.0;
       g_suppressed[k] = false;
       g_spikeWasDetected[k] = false;
+      g_transitionHoldRemaining[k] = 0;
       g_verification[k].active = false;
       g_verification[k].startTime = 0;
       g_verification[k].startPrice = 0.0;
@@ -480,6 +514,7 @@ int OnInit()
         }
 
    LoadSpikeStates();   // チャート切替で読み込み直された場合に急変状態を引き継ぐ
+   LoadTransitionHoldStates(); // チャート切替後もTRANSITION表示の残り本数を引き継ぐ
    VerificationLogOpen();
    VerificationLoadEvents(); // チャート切替後も計測中のTRANSITION検証を引き継ぐ
 
@@ -551,6 +586,14 @@ void UpdateAndDraw()
       if(updated)
         {
          datetime closedBarTime = g_scan[i].lastBarTime;
+
+         // TRANSITIONは判定自体を変えず、一覧上の見落としを防ぐため表示だけ数本保持する。
+         if(g_scan[i].state == CCOMP_TRANSITION)
+            g_transitionHoldRemaining[i] = MathMax(1, InpTransitionDisplayHoldBars);
+         else if(g_transitionHoldRemaining[i] > 0)
+            g_transitionHoldRemaining[i]--;
+         SaveTransitionHoldState(i);
+
          // 計測中のイベントは新しい確定足ごとに値幅を更新
          if(hadActiveTransition)
             VerificationUpdateTransition(i);
@@ -644,11 +687,12 @@ void UpdateAndDraw()
       // 急変で圧縮表示を解除された行は、圧縮がNORMALに戻るまで出さない
       if(UseSpikeOverride && g_suppressed[i]) continue;
 
-      if(!ShouldDisplay(g_scan[i].state)) continue;
+      CCOMP_STATE rowState = DisplayStateForRow(i);
+      if(!ShouldDisplay(rowState)) continue;
       candIdx[n]  = i;
       candKind[n] = 0;
       // TRANSITIONは圧縮表示の中で最優先、それ以外はScoreの高い順
-      candKey[n]  = (g_scan[i].state == CCOMP_TRANSITION) ? (100.0 + g_scan[i].score) : (double)g_scan[i].score;
+      candKey[n]  = (rowState == CCOMP_TRANSITION) ? (100.0 + g_scan[i].score) : (double)g_scan[i].score;
       n++;
      }
 
@@ -726,9 +770,13 @@ void UpdateAndDraw()
         }
       else
         {
+         CCOMP_STATE rowState = DisplayStateForRow(idx);
+         string stateLabel = CCOMP_StateText(rowState);
+         if(rowState == CCOMP_TRANSITION && inst.state != CCOMP_TRANSITION)
+            stateLabel = "TRANSITION*"; // * = 表示保持中（判定そのものは終了）
          line = StringFormat("%-9s %-4s %-20s Sc%d Δ%+d Age%d",
-            inst.symbol, tfName, CCOMP_StateText(inst.state), inst.score, inst.delta, inst.age);
-         rowClr = CCOMP_StateColor(inst.state);
+            inst.symbol, tfName, stateLabel, inst.score, inst.delta, inst.age);
+         rowClr = CCOMP_StateColor(rowState);
         }
 
       DrawRow(r, line, rowClr);

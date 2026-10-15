@@ -60,11 +60,6 @@ struct CCOMP_Instance
    double         range20Pct;
    double         adxValue;
 
-   // パーセンタイル値（詳細パネルと検証ログ用）
-   double         atrPctile;
-   double         bbPctile;
-   double         rangePctile;
-
    int            atrScore;
    int            bbScore;
    int            rangeScore;
@@ -98,9 +93,6 @@ bool CCOMP_InitInstance(CCOMP_Instance &inst, const string symbol, const ENUM_TI
    inst.bbWidthPct      = 0.0;
    inst.range20Pct      = 0.0;
    inst.adxValue        = 0.0;
-   inst.atrPctile       = 0.0;
-   inst.bbPctile        = 0.0;
-   inst.rangePctile     = 0.0;
    inst.atrScore = inst.bbScore = inst.rangeScore = inst.adxScore = inst.score = 0;
    inst.prevScore       = 0;
    inst.prevATRPct      = 0.0;
@@ -307,9 +299,6 @@ bool CCOMP_UpdateInstance(CCOMP_Instance &inst)
    inst.bbWidthPct  = curBBWidthPct;
    inst.range20Pct  = curRange20Pct;
    inst.adxValue    = curADX;
-   inst.atrPctile   = atrPercentile;
-   inst.bbPctile    = bbPercentile;
-   inst.rangePctile = rangePercentile;
    inst.atrScore    = atrScore;
    inst.bbScore     = bbScore;
    inst.rangeScore  = rangeScore;
