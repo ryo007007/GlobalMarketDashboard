@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //|                                     CCompression_Scanner.mq5      |
 //|  複数通貨ペア × 複数時間足のCCompression状態を一覧表示するスキャナー |
 //|                                                                    |
@@ -11,7 +11,7 @@
 //|  パネルへの統合を検討する。                                        |
 //+------------------------------------------------------------------+
 #property copyright "CCompression scanner"
-#property version   "1.11"
+#property version   "1.12"
 #property indicator_chart_window
 #property indicator_plots 0
 
@@ -96,7 +96,8 @@ struct CCOMP_VerificationEvent
    int      startScore;
   };
 CCOMP_VerificationEvent g_verification[];
-int g_transitionHoldRemaining[]; // TRANSITION表示保持の残り確定足数
+int  g_transitionHoldRemaining[]; // TRANSITION表示保持の残り確定足数
+bool g_hasUpdatedSinceInit[];      // 再初期化後、その銘柄・時間足を初回計算済みか
 
 void DrawDetailPanel();   // 解説パネル描画(定義はファイル末尾)
 
@@ -487,6 +488,7 @@ int OnInit()
    ArrayResize(g_spikeWasDetected, g_scanTotal);
    ArrayResize(g_verification, g_scanTotal);
    ArrayResize(g_transitionHoldRemaining, g_scanTotal);
+   ArrayResize(g_hasUpdatedSinceInit, g_scanTotal);
    for(int k = 0; k < g_scanTotal; k++)
      {
       g_spikeUntil[k] = 0;
@@ -496,6 +498,7 @@ int OnInit()
       g_suppressed[k] = false;
       g_spikeWasDetected[k] = false;
       g_transitionHoldRemaining[k] = 0;
+      g_hasUpdatedSinceInit[k] = false;
       g_verification[k].active = false;
       g_verification[k].startTime = 0;
       g_verification[k].startPrice = 0.0;
@@ -586,16 +589,21 @@ void UpdateAndDraw()
       if(updated)
         {
          datetime closedBarTime = g_scan[i].lastBarTime;
+         bool firstUpdateAfterInit = !g_hasUpdatedSinceInit[i];
 
-         // TRANSITIONは判定自体を変えず、一覧上の見落としを防ぐため表示だけ数本保持する。
+         // 再初期化後の最初の計算は履歴データの読み込み直しであり、
+         // 新しい確定足が実際に経過したわけではないため、保持本数を減らさない。
+         // これにより、行クリックでチャートが切り替わるたびに保持期間が消費される問題を防ぐ。
          if(g_scan[i].state == CCOMP_TRANSITION)
             g_transitionHoldRemaining[i] = MathMax(1, InpTransitionDisplayHoldBars);
-         else if(g_transitionHoldRemaining[i] > 0)
+         else if(g_transitionHoldRemaining[i] > 0 && !firstUpdateAfterInit)
             g_transitionHoldRemaining[i]--;
          SaveTransitionHoldState(i);
+         g_hasUpdatedSinceInit[i] = true;
 
-         // 計測中のイベントは新しい確定足ごとに値幅を更新
-         if(hadActiveTransition)
+         // 計測中イベントの更新も、再初期化後の初回計算では行わない。
+         // 初回は過去の確定足を読み込み直しているだけなので、計測本数を誤って増やさない。
+         if(hadActiveTransition && !firstUpdateAfterInit)
             VerificationUpdateTransition(i);
 
          if(InpEnableVerificationLog && InpLogStateChanges && wasReady &&
