@@ -9,9 +9,12 @@ Global Market Dashboard Ultimate（GMD）は、MetaTrader 5 上で
 現在の実装重心は **Ver2.11 の土台整備** にあり、  
 銘柄自動検出・通貨強弱・Best Pair・Confidence・Anomaly・Energy・Adaptive Update を中心に開発を進めています。
 
----
+## Documentation
 
-今日もよろしくお願いします！😊
+- [Project Specification](docs/ProjectSpecification.md)
+- [User Manual](docs/UserManual.md)
+- [Logic Manual](docs/LogicManual.md)
+- [Trading Guide](docs/TradingGuide.md)
 
 ## `src` は何の略？
 
