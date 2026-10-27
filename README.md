@@ -22,7 +22,7 @@ Global Market Dashboard Ultimate（GMD）は、MetaTrader 5 上で
 - [ユーザーマニュアル](docs/UserManual.md)
 - [計算ロジック説明書](docs/LogicManual.md)
 - [トレードガイド](docs/TradingGuide.md)
-
+- [通貨モメンタム計算ロジック説明書](docs/CurrencyMomentum.md)
 
 ## `src` は何の略？
 
