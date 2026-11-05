@@ -385,6 +385,19 @@ void VerificationLoadEvents()
       g_verification[i].minLow      = GlobalVariableGet(VerificationKey("TR4", i));
       g_verification[i].barsElapsed = (int)GlobalVariableGet(VerificationKey("TR5", i));
       g_verification[i].startScore  = (int)GlobalVariableGet(VerificationKey("TR6", i));
+
+      // 保存されたカウンターをそのまま信用せず、開始足と最新確定足の位置から再計算する。
+      // startTime は計測開始となった確定足の始値時刻。最新確定足が shift=1 のため、
+      // 開始足が shift=2 なら経過は1本となる。
+      int startShift = iBarShift(g_scan[i].symbol, g_scan[i].tf,
+                                 g_verification[i].startTime, true);
+      if(g_verification[i].startTime <= 0 || startShift < 1)
+        {
+         VerificationClearEvent(i);
+         continue;
+        }
+      g_verification[i].barsElapsed = MathMax(0, startShift - 1);
+      VerificationSaveEvent(i);
      }
   }
 
@@ -426,8 +439,8 @@ void VerificationLogTransitionFinish(const int i, const string reason)
    int digits = (int)SymbolInfoInteger(g_scan[i].symbol, SYMBOL_DIGITS);
    string tf = EnumToString(g_scan[i].tf);
    StringReplace(tf, "PERIOD_", "");
-   datetime endTime = iTime(g_scan[i].symbol, g_scan[i].tf, 1);
-   if(endTime <= 0) endTime = TimeCurrent();
+   datetime endBarOpen = iTime(g_scan[i].symbol, g_scan[i].tf, 1);
+   datetime endTime = (endBarOpen > 0 ? endBarOpen + PeriodSeconds(g_scan[i].tf) : TimeCurrent());
 
    // 実際に記録する開始・終了時刻の差を経過時間として出力する。
    // 休場・データ欠損がある場合も、バー数×時間足とは別に表示する。
@@ -465,7 +478,16 @@ void VerificationUpdateTransition(const int i)
    double lo = iLow(g_scan[i].symbol, g_scan[i].tf, 1);
    if(hi > g_verification[i].maxHigh) g_verification[i].maxHigh = hi;
    if(lo < g_verification[i].minLow)  g_verification[i].minLow  = lo;
-   g_verification[i].barsElapsed++;
+   // バー数は独立カウンターで加算せず、開始足と最新確定足の位置から算出する。
+   // これにより再初期化・履歴再読込で開始時刻とカウンターがずれるのを防ぐ。
+   int startShift = iBarShift(g_scan[i].symbol, g_scan[i].tf,
+                              g_verification[i].startTime, true);
+   if(startShift < 1)
+     {
+      VerificationClearEvent(i);
+      return;
+     }
+   g_verification[i].barsElapsed = MathMax(0, startShift - 1);
    VerificationSaveEvent(i);
    if(g_verification[i].barsElapsed >= MathMax(1, InpTransitionMeasureBars))
       VerificationLogTransitionFinish(i, "指定計測本数に到達");
