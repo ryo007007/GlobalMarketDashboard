@@ -1,0 +1,1607 @@
+﻿//+------------------------------------------------------------------+
+//|                         CCompression_Scanner_v1.41.mq5            |
+//|  複数通貨ペア × 複数時間足のCCompression状態を一覧表示するスキャナー |
+//|                                                                    |
+//|  ・Compression状態(NORMAL以外)の銘柄/時間足のみ表示                |
+//|  ・圧縮が強い順(TRANSITION優先 → Score降順)にソート                |
+//|  ・検証ログを MQL5/Files/GlobalMarketDashboardVerification log に出力 |
+//|  ・行をクリックするとその通貨ペア・時間足にチャートが切り替わる    |
+//|  ・TRANSITION後を上方/下方ブレイク・だまし候補・不発等に事後判定 |
+//|  ・v1.41: CSV計測時間の整合性改善・急変ログの同一バー重複防止       |
+//|  ・v1.40: 開始Score＋銘柄/時間足別の過去実績でTRANSITIONを順位付け |
+//|                                                                    |
+//|  まずはこのスタンドアロン版で検証し、問題なければMTF_TrendSign     |
+//|  パネルへの統合を検討する。                                        |
+//+------------------------------------------------------------------+
+#property copyright "CCompression scanner"
+#property version   "1.41"
+#property indicator_chart_window
+#property indicator_plots 0
+
+#include "CCompressionScannerCompat.mqh"  // Scanner専用API。src側のCCompression.mqhは変更しない
+#include "../src/Modules/Engines/SuddenMoveDetector.mqh"   // 急変検知(SMD_CheckSpike)を使用
+
+//---------------- 入力パラメータ ----------------
+input string InpSymbols = "USDJPY,EURUSD,GBPUSD,AUDUSD,NZDUSD,USDCAD,USDCHF,EURJPY,GBPJPY,AUDJPY,NZDJPY,CADJPY,CHFJPY,EURGBP,GBPCHF,EURCAD,EURCHF,AUDNZD,CADCHF,AUDCHF,GBPCAD,AUDCAD,EURAUD,GBPAUD,EURNZD,XAUUSD,BTCUSD";
+
+input group "=== 監視する時間足 ==="
+input bool ScanD1  = true;  // 日足
+input bool ScanH4  = true;  // 4時間足
+input bool ScanH1  = true;  // 1時間足
+input bool ScanM30 = true;  // 30分足
+input bool ScanM15 = true;  // 15分足
+input bool ScanM5  = false; // 5分足（監視対象が多いと重くなるのでデフォルトOFF）
+input bool ScanM1  = false; // 1分足（同上）
+
+input group "=== 表示設定 ==="
+input int  PanelX           = 10;   // パネルX座標
+input int  PanelY           = 20;   // パネルY座標
+input int  MaxRows          = 40;   // 最大表示行数
+input int  RefreshSeconds   = 1;    // 再計算の最小間隔(秒)
+input bool OpenInNewChart   = false; // trueなら新規チャート、falseなら現在のチャートを切替
+
+input group "=== 検証ログ設定 ==="
+input bool InpEnableVerificationLog = true; // 検証ログを出力する(true/false)
+input bool InpLogStateChanges       = true; // 圧縮状態の変化も記録する
+input int  InpTransitionMeasureBars = 12;   // TRANSITION発生後、最大値幅を計測する確定足数
+input int  InpTransitionDisplayHoldBars = 3; // TRANSITION判定後、一覧表示を保持する確定足数
+
+input group "=== TRANSITION後の相場判定・結果統計 (v1.40) ==="
+input bool   InpEnableOutcomeJudge       = true;  // 計測終了時に事後判定を行う
+input double InpOutcomeATRMultiplier     = 0.50;  // ブレイク判定に必要な終値変動(ATR倍率)
+input double InpFalseBreakReturnRatio    = 0.25;  // 元の価格帯へ戻ったとみなす閾値(判定閾値比)
+input double InpFalseBreakExcursionATR   = 0.75;  // だまし候補とする最大進行幅(ATR倍率)
+
+input group "=== TRANSITIONランキング (v1.40) ==="
+input bool   InpEnableTransitionRanking = true; // TRANSITION候補を実績込みで順位付け
+input int    InpRankingMinSamples       = 5;     // 実績補正を十分に反映する最低サンプル数
+input double InpRankingHistoryWeight    = 3.0;   // 過去実績の影響度
+input bool   InpExportRankingCSV        = true;  // 検証レポート保存時にランキングCSVも出力
+
+input group "=== 解説パネル(現在のチャートの通貨・時間足) ==="
+input bool ShowDetailPanel = true;               // 解説パネルを表示する
+input ENUM_BASE_CORNER DetailCorner = CORNER_LEFT_LOWER; // 表示する隅
+input int  DetailX         = 10;                 // 隅からのX距離
+input int  DetailY         = 20;                 // 隅からのY距離
+
+input group "=== 表示する最低状態 ==="
+input bool ShowCompression       = true; // COMPRESSION以上を表示
+input bool ShowOnlyStrongOrAbove = false; // trueならSTRONG COMPRESSION以上のみ表示
+input bool ShowTransition        = true; // TRANSITION(圧縮解除中)を表示
+
+input group "=== 急変検知との連携 ==="
+input bool UseSpikeOverride  = true;  // 急変を検知したら圧縮表示を解除して「急変」として表示する
+input int  SpikeHoldBars     = 3;     // 急変表示を保持する本数(その時間足の本数)
+input bool SpikeShowAlways   = false; // trueなら圧縮中でない行の急変も表示(falseは圧縮中の行のみ対象)
+input color SpikeUpColor     = clrLime;      // 急変(上昇)の表示色
+input color SpikeDownColor   = clrDeepPink;  // 急変(下落)の表示色
+
+//---------------- グローバル ----------------
+string          g_symbols[];
+int             g_symbolCount = 0;
+ENUM_TIMEFRAMES g_tfList[];
+int             g_tfCount = 0;
+
+CCOMP_Instance  g_scan[];     // symbolCount * tfCount 分のインスタンス
+int             g_scanTotal = 0;
+
+// 現在表示中の行がどの(symbol, tf)に対応するか（クリック処理用。描画のたびに更新）
+string          g_rowSymbol[];
+ENUM_TIMEFRAMES g_rowTF[];
+int             g_rowCount = 0;
+
+// (通貨ペア×時間足)ごとの急変状態。g_scanと同じインデックスで対応する
+datetime        g_spikeUntil[];   // この時刻までは「急変」として表示する
+bool            g_spikeUp[];      // 急変の方向(true=上昇)
+double          g_spikeRatio[];   // 急変検知時のATR比
+double          g_spikeZ[];       // 急変検知時のROC Zスコア
+bool            g_suppressed[];   // 急変で圧縮表示を解除済み(圧縮がNORMALに戻るまで非表示)
+bool            g_spikeWasDetected[]; // 急変ログの重複防止(連続検知中は1回だけ)
+int             g_verificationLog = INVALID_HANDLE;
+string          g_verificationLogPath = "";
+string          g_verificationLogDate = "";
+
+struct CCOMP_VerificationEvent
+  {
+   bool     active;
+   datetime startTime;
+   double   startPrice;
+   double   maxHigh;
+   double   minLow;
+   int      barsElapsed;
+   int      startScore;
+   double   startATR;
+  };
+CCOMP_VerificationEvent g_verification[];
+string   g_lastOutcome[];
+datetime g_lastOutcomeTime[];
+int  g_transitionHoldRemaining[]; // TRANSITION表示保持の残り確定足数
+bool g_hasUpdatedSinceInit[];      // 再初期化後、その銘柄・時間足を初回計算済みか
+
+void DrawDetailPanel();   // 解説パネル描画(定義はファイル末尾)
+
+//+------------------------------------------------------------------+
+int ParseSymbols(string src, string &outArr[])
+  {
+   string raw[];
+   int n = StringSplit(src, ',', raw);
+   int count = 0;
+   ArrayResize(outArr, n);
+   for(int i = 0; i < n; i++)
+     {
+      string s = raw[i];
+      StringTrimLeft(s); StringTrimRight(s);
+      if(StringLen(s) == 0) continue;
+      outArr[count] = s;
+      count++;
+     }
+   ArrayResize(outArr, count);
+   return count;
+  }
+
+//+------------------------------------------------------------------+
+color CCOMP_StateColor(const CCOMP_STATE st)
+  {
+   switch(st)
+     {
+      case CCOMP_COMPRESSION:        return clrYellow;
+      case CCOMP_STRONG_COMPRESSION: return clrOrange;
+      case CCOMP_TIGHT_COMPRESSION:  return clrRed;
+      case CCOMP_TRANSITION:         return clrAqua;
+      default:                       return clrWhite;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| 急変状態の保存・復元                                               |
+//| 行クリックでチャートの通貨/時間足が変わるとインジケーターが         |
+//| 読み込み直されるため、急変の保持状態を端末のグローバル変数に        |
+//| 保存して引き継ぐ。                                                 |
+//+------------------------------------------------------------------+
+string GVKey(const int i, const string field)
+  {
+   return "CCOMP_" + field + "_" + g_scan[i].symbol + "_" + IntegerToString(PeriodSeconds(g_scan[i].tf));
+  }
+
+// TRANSITIONの表示保持状態を端末グローバル変数に保存する。
+void SaveTransitionHoldState(const int i)
+  {
+   string key = GVKey(i, "TH");
+   if(g_transitionHoldRemaining[i] > 0)
+      GlobalVariableSet(key, (double)g_transitionHoldRemaining[i]);
+   else if(GlobalVariableCheck(key))
+      GlobalVariableDel(key);
+  }
+
+void LoadTransitionHoldStates()
+  {
+   for(int i = 0; i < g_scanTotal; i++)
+     {
+      string key = GVKey(i, "TH");
+      if(GlobalVariableCheck(key))
+         g_transitionHoldRemaining[i] = (int)GlobalVariableGet(key);
+      if(g_transitionHoldRemaining[i] < 0)
+         g_transitionHoldRemaining[i] = 0;
+     }
+  }
+
+// 実際のエンジン状態は変更せず、一覧表示用にTRANSITIONだけ保持する。
+CCOMP_STATE DisplayStateForRow(const int i)
+  {
+   if(g_scan[i].state == CCOMP_TRANSITION || g_transitionHoldRemaining[i] > 0)
+      return CCOMP_TRANSITION;
+   return g_scan[i].state;
+  }
+
+void SaveSpikeState(const int i)
+  {
+   GlobalVariableSet(GVKey(i, "SU"), (double)g_spikeUntil[i]);
+   GlobalVariableSet(GVKey(i, "SD"), g_spikeUp[i] ? 1.0 : 0.0);
+   GlobalVariableSet(GVKey(i, "SR"), g_spikeRatio[i]);
+   GlobalVariableSet(GVKey(i, "SZ"), g_spikeZ[i]);
+  }
+
+void SaveSuppressed(const int i, const bool on)
+  {
+   string k = GVKey(i, "SP");
+   if(on)
+      GlobalVariableSet(k, 1.0);
+   else if(GlobalVariableCheck(k))
+      GlobalVariableDel(k);
+  }
+
+void LoadSpikeStates()
+  {
+   datetime now = TimeCurrent();
+   for(int i = 0; i < g_scanTotal; i++)
+     {
+      string ku = GVKey(i, "SU");
+      if(GlobalVariableCheck(ku))
+        {
+         datetime until = (datetime)(long)GlobalVariableGet(ku);
+         if(until > now)
+           {
+            g_spikeUntil[i] = until;
+            g_spikeUp[i]    = (GlobalVariableGet(GVKey(i, "SD")) > 0.5);
+            g_spikeRatio[i] = GlobalVariableGet(GVKey(i, "SR"));
+            g_spikeZ[i]     = GlobalVariableGet(GVKey(i, "SZ"));
+           }
+         else
+           {
+            // 期限切れは削除
+            GlobalVariableDel(ku);
+            GlobalVariableDel(GVKey(i, "SD"));
+            GlobalVariableDel(GVKey(i, "SR"));
+            GlobalVariableDel(GVKey(i, "SZ"));
+           }
+        }
+      if(GlobalVariableCheck(GVKey(i, "SP")))
+         g_suppressed[i] = true;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| 検証ログ                                                         |
+//| 保存先: MQL5/Files/GlobalMarketDashboardVerification log/       |
+//| 形式: UTF-8テキスト、タブ区切り。1日ごとにファイル作成       |
+//+------------------------------------------------------------------+
+string VerificationKey(const string field, const int i)
+  {
+   return "CCV120_" + field + "_" + g_scan[i].symbol + "_" + IntegerToString(PeriodSeconds(g_scan[i].tf));
+  }
+
+string VerificationSessionJST(const datetime serverTime)
+  {
+   // 直近のサーバーUTC差を使ってJSTへ概算変換。DST切替日の過去データは目安。
+   int serverUtcOffset = (int)(TimeCurrent() - TimeGMT());
+   datetime jst = serverTime - serverUtcOffset + 9 * 3600;
+   MqlDateTime dt;
+   TimeToStruct(jst, dt);
+   int h = dt.hour;
+   if(h >= 9 && h < 15) return "東京";
+   if(h >= 15 && h < 17) return "東京後半/欧州前";
+   if(h >= 17 && h < 21) return "欧州";
+   if(h >= 21 || h < 2) return "欧州+NY";
+   if(h >= 2 && h < 6) return "NY";
+   return "その他";
+  }
+
+string VerificationTimeJST(const datetime serverTime)
+  {
+   int serverUtcOffset = (int)(TimeCurrent() - TimeGMT());
+   datetime jst = serverTime - serverUtcOffset + 9 * 3600;
+   return TimeToString(jst, TIME_DATE|TIME_MINUTES);
+  }
+
+// CSVは全イベントを同じ20列で出力する。FileWriteが区切り文字・引用符を処理する。
+void VerificationWriteRecord(const string f0, const string f1, const string f2,
+                              const string f3, const string f4, const string f5,
+                              const string f6, const string f7, const string f8,
+                              const string f9, const string f10, const string f11,
+                              const string f12, const string f13, const string f14,
+                              const string f15, const string f16, const string f17,
+                              const string f18, const string f19)
+  {
+   if(!InpEnableVerificationLog)
+      return;
+
+   string datePart = TimeToString(TimeCurrent(), TIME_DATE);
+   StringReplace(datePart, ".", "-");
+   if(g_verificationLog != INVALID_HANDLE && g_verificationLogDate != datePart)
+     {
+      FileFlush(g_verificationLog);
+      FileClose(g_verificationLog);
+      g_verificationLog = INVALID_HANDLE;
+     }
+   if(g_verificationLog == INVALID_HANDLE)
+      VerificationLogOpen();
+   if(g_verificationLog == INVALID_HANDLE)
+      return;
+
+   FileSeek(g_verificationLog, 0, SEEK_END);
+   FileWrite(g_verificationLog, f0, f1, f2, f3, f4, f5, f6, f7, f8, f9,
+             f10, f11, f12, f13, f14, f15, f16, f17, f18, f19);
+   FileFlush(g_verificationLog);
+  }
+
+void VerificationLogOpen()
+  {
+   if(!InpEnableVerificationLog)
+      return;
+
+   string folder = "GlobalMarketDashboardVerification log";
+   FolderCreate(folder);
+
+   string datePart = TimeToString(TimeCurrent(), TIME_DATE);
+   StringReplace(datePart, ".", "-");
+   g_verificationLogPath = folder + "\\CCompression_Verification_v1.40_" + datePart + ".csv";
+   g_verificationLogDate = datePart;
+
+   g_verificationLog = FileOpen(g_verificationLogPath,
+                                FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_SHARE_READ|FILE_SHARE_WRITE,
+                                ',', CP_UTF8);
+   if(g_verificationLog == INVALID_HANDLE)
+     {
+      Print("CSV検証ログを開けません: MQL5/Files/", g_verificationLogPath,
+            " / error=", GetLastError());
+      return;
+     }
+
+   if(FileSize(g_verificationLog) == 0)
+     {
+      FileWrite(g_verificationLog,
+                "記録種別", "銘柄", "時間足", "発生時刻(JST)",
+                "計測開始時刻(JST)", "計測終了時刻(JST)", "状態", "開始スコア(0-8)",
+                "最大片方向変動幅(価格差)", "最大上昇幅", "最大下落幅",
+                "最大片方向変動幅(%)", "高値-安値幅(価格差)", "経過時間",
+                "計測終了価格", "終了変化幅", "終了変化率(%)", "終了方向",
+                "時間帯(JST)", "補足");
+      FileFlush(g_verificationLog);
+     }
+   FileSeek(g_verificationLog, 0, SEEK_END);
+   Print("CSV検証ログ出力先: MQL5/Files/", g_verificationLogPath);
+  }
+
+void VerificationLogStateChange(const int i, const CCOMP_STATE oldState,
+                                const CCOMP_STATE newState, const datetime eventTime)
+  {
+   if(!InpEnableVerificationLog || !InpLogStateChanges)
+      return;
+   string key = VerificationKey("STATELOG", i);
+   double previousTime = GlobalVariableCheck(key) ? GlobalVariableGet(key) : 0.0;
+   if((datetime)previousTime == eventTime)
+      return; // チャート切替・再読み込み時の同じ確定足の重複記録を防止
+   GlobalVariableSet(key, (double)eventTime);
+
+   string tf = EnumToString(g_scan[i].tf);
+   StringReplace(tf, "PERIOD_", "");
+   string note = CCOMP_StateText(oldState) + " -> " + CCOMP_StateText(newState);
+   VerificationWriteRecord("STATE", g_scan[i].symbol, tf, VerificationTimeJST(eventTime),
+                            "", "", CCOMP_StateText(newState), IntegerToString(g_scan[i].score),
+                            "", "", "", "", "", "", "", "", "", "",
+                            VerificationSessionJST(eventTime), note);
+  }
+
+void VerificationSaveEvent(const int i)
+  {
+   CCOMP_VerificationEvent e = g_verification[i];
+   string fields[8];
+   fields[0] = "ACTIVE";
+   fields[1] = DoubleToString((double)e.startTime, 0);
+   fields[2] = DoubleToString(e.startPrice, 16);
+   fields[3] = DoubleToString(e.maxHigh, 16);
+   fields[4] = DoubleToString(e.minLow, 16);
+   fields[5] = IntegerToString(e.barsElapsed);
+   fields[6] = IntegerToString(e.startScore);
+   fields[7] = DoubleToString(e.startATR, 16);
+   for(int k=0; k<8; k++)
+      GlobalVariableSet(VerificationKey("TR" + IntegerToString(k), i),
+                        (k==0 ? 1.0 : StringToDouble(fields[k])));
+  }
+
+void VerificationClearEvent(const int i)
+  {
+   for(int k=0; k<8; k++)
+     {
+      string key = VerificationKey("TR" + IntegerToString(k), i);
+      if(GlobalVariableCheck(key)) GlobalVariableDel(key);
+     }
+   g_verification[i].active = false;
+  }
+
+void VerificationLoadEvents()
+  {
+   for(int i=0; i<g_scanTotal; i++)
+     {
+      string key = VerificationKey("TR0", i);
+      if(!GlobalVariableCheck(key) || GlobalVariableGet(key) < 0.5)
+         continue;
+      g_verification[i].active      = true;
+      g_verification[i].startTime   = (datetime)(long)GlobalVariableGet(VerificationKey("TR1", i));
+      g_verification[i].startPrice  = GlobalVariableGet(VerificationKey("TR2", i));
+      g_verification[i].maxHigh     = GlobalVariableGet(VerificationKey("TR3", i));
+      g_verification[i].minLow      = GlobalVariableGet(VerificationKey("TR4", i));
+      g_verification[i].barsElapsed = (int)GlobalVariableGet(VerificationKey("TR5", i));
+      g_verification[i].startScore  = (int)GlobalVariableGet(VerificationKey("TR6", i));
+      string atrKey = VerificationKey("TR7", i);
+      g_verification[i].startATR = (GlobalVariableCheck(atrKey) ? GlobalVariableGet(atrKey) : 0.0);
+
+      // 保存されたカウンターをそのまま信用せず、開始足と最新確定足の位置から再計算する。
+      // startTime は計測開始となった確定足の始値時刻。最新確定足が shift=1 のため、
+      // 開始足が shift=2 なら経過は1本となる。
+      int startShift = iBarShift(g_scan[i].symbol, g_scan[i].tf,
+                                 g_verification[i].startTime, true);
+      if(g_verification[i].startTime <= 0 || startShift < 1)
+        {
+         VerificationClearEvent(i);
+         continue;
+        }
+      g_verification[i].barsElapsed = MathMax(0, startShift - 1);
+      VerificationSaveEvent(i);
+     }
+  }
+
+void VerificationLogTransitionStart(const int i, const datetime eventTime)
+  {
+   string key = VerificationKey("TRLOG", i);
+   double previousTime = GlobalVariableCheck(key) ? GlobalVariableGet(key) : 0.0;
+   if((datetime)previousTime == eventTime)
+      return;
+   GlobalVariableSet(key, (double)eventTime);
+
+   g_verification[i].active      = true;
+   g_verification[i].startTime   = eventTime;
+   g_verification[i].startPrice  = iClose(g_scan[i].symbol, g_scan[i].tf, 1);
+   g_verification[i].maxHigh     = iHigh(g_scan[i].symbol, g_scan[i].tf, 1);
+   g_verification[i].minLow      = iLow(g_scan[i].symbol, g_scan[i].tf, 1);
+   g_verification[i].barsElapsed = 0;
+   g_verification[i].startScore  = g_scan[i].score;
+   double atrBuffer[1];
+   g_verification[i].startATR = (CopyBuffer(g_scan[i].atrHandle, 0, 1, 1, atrBuffer) == 1 ? atrBuffer[0] : 0.0);
+   VerificationSaveEvent(i);
+
+   string tf = EnumToString(g_scan[i].tf);
+   StringReplace(tf, "PERIOD_", "");
+   int digits = (int)SymbolInfoInteger(g_scan[i].symbol, SYMBOL_DIGITS);
+   VerificationWriteRecord("TRANSITION_START", g_scan[i].symbol, tf, VerificationTimeJST(eventTime),
+                            VerificationTimeJST(eventTime), "", "TRANSITION", IntegerToString(g_scan[i].score),
+                            "", "", "", "", "", "計測中", "", "", "", "",
+                            VerificationSessionJST(eventTime), "計測開始;開始価格=" + DoubleToString(g_verification[i].startPrice, digits));
+  }
+
+string JudgeTransitionOutcome(const CCOMP_VerificationEvent &e, const double endPrice, string &detail)
+  {
+   detail = "";
+   if(!InpEnableOutcomeJudge)
+      return "判定OFF";
+   if(e.startATR <= 0.0)
+     {
+      detail = "開始時ATRを取得できないため判定保留";
+      return "判定保留";
+     }
+
+   double threshold = e.startATR * MathMax(0.05, InpOutcomeATRMultiplier);
+   double upExcursion = MathMax(0.0, e.maxHigh - e.startPrice);
+   double downExcursion = MathMax(0.0, e.startPrice - e.minLow);
+   double net = endPrice - e.startPrice;
+   double returnBand = threshold * MathMax(0.05, InpFalseBreakReturnRatio);
+   double falseExcursion = e.startATR * MathMax(InpOutcomeATRMultiplier, InpFalseBreakExcursionATR);
+
+   if(net >= threshold)
+     {
+      detail = StringFormat("終値上昇幅 %.5f >= 判定閾値 %.5f", net, threshold);
+      return "上方ブレイク";
+     }
+   if(net <= -threshold)
+     {
+      detail = StringFormat("終値下落幅 %.5f <= -判定閾値 %.5f", net, threshold);
+      return "下方ブレイク";
+     }
+
+   bool returnedToStart = (MathAbs(net) <= returnBand);
+   bool hadLargeMove = (MathMax(upExcursion, downExcursion) >= falseExcursion);
+   bool bothSides = (upExcursion >= threshold && downExcursion >= threshold);
+   if(returnedToStart && (hadLargeMove || bothSides))
+     {
+      detail = StringFormat("最大上昇 %.5f / 最大下落 %.5f の後、終値が開始価格付近へ回帰", upExcursion, downExcursion);
+      return "だまし候補";
+     }
+   if(bothSides)
+     {
+      detail = StringFormat("上下両方向に閾値到達(上 %.5f / 下 %.5f)、終値方向は不明瞭", upExcursion, downExcursion);
+      return "方向感なし";
+     }
+   if(MathMax(upExcursion, downExcursion) < threshold)
+     {
+      detail = StringFormat("最大進行幅 %.5f < 判定閾値 %.5f", MathMax(upExcursion, downExcursion), threshold);
+      return "不発";
+     }
+
+   detail = StringFormat("最大上昇 %.5f / 最大下落 %.5f / 終値変化 %.5f", upExcursion, downExcursion, net);
+   return "方向未確定";
+  }
+
+void SaveLastOutcome(const int i, const string outcome, const datetime when)
+  {
+   g_lastOutcome[i] = outcome;
+   g_lastOutcomeTime[i] = when;
+   GlobalVariableSet(VerificationKey("OUTCOME", i), (double)when);
+   // 文字列は端末GVに保存できないため、短い判定コードを数値で保存
+   int code = 0;
+   if(outcome == "上方ブレイク") code = 1;
+   else if(outcome == "下方ブレイク") code = 2;
+   else if(outcome == "だまし候補") code = 3;
+   else if(outcome == "不発") code = 4;
+   else if(outcome == "方向感なし") code = 5;
+   else if(outcome == "方向未確定") code = 6;
+   GlobalVariableSet(VerificationKey("OUTCODE", i), (double)code);
+  }
+
+
+// v1.30累積統計。metric: 0=合計, 1=上方, 2=下方, 3=だまし,
+// 4=不発, 5=方向感なし, 6=方向未確定/判定保留。
+string OutcomeStatKey(const int i, const int metric, const int scoreBucket=-1)
+  {
+   string base = g_scan[i].symbol + "_" + IntegerToString(PeriodSeconds(g_scan[i].tf));
+   if(scoreBucket >= 0)
+      return "CCV130_SC_" + base + "_" + IntegerToString(scoreBucket) + "_" + IntegerToString(metric);
+   return "CCV130_ST_" + base + "_" + IntegerToString(metric);
+  }
+
+double OutcomeStatGet(const int i, const int metric, const int scoreBucket=-1)
+  {
+   string key = OutcomeStatKey(i, metric, scoreBucket);
+   return (GlobalVariableCheck(key) ? GlobalVariableGet(key) : 0.0);
+  }
+
+void OutcomeStatIncrement(const int i, const int metric, const int scoreBucket=-1)
+  {
+   string key = OutcomeStatKey(i, metric, scoreBucket);
+   double value = (GlobalVariableCheck(key) ? GlobalVariableGet(key) : 0.0);
+   GlobalVariableSet(key, value + 1.0);
+  }
+
+void UpdateOutcomeStatistics(const int i, const int startScore, const string outcome)
+  {
+   int metric = 6;
+   if(outcome == "上方ブレイク") metric = 1;
+   else if(outcome == "下方ブレイク") metric = 2;
+   else if(outcome == "だまし候補") metric = 3;
+   else if(outcome == "不発") metric = 4;
+   else if(outcome == "方向感なし") metric = 5;
+
+   OutcomeStatIncrement(i, 0);
+   OutcomeStatIncrement(i, metric);
+   int bucket = MathMax(0, MathMin(8, startScore));
+   OutcomeStatIncrement(i, 0, bucket);
+   OutcomeStatIncrement(i, metric, bucket);
+  }
+
+// v1.40 TRANSITIONランキング用の過去実績評価。
+// 銘柄×時間足ごとの累積結果を利用し、検出条件そのものは変更しない。
+double TransitionHistoricalQuality(const int i)
+  {
+   double total = OutcomeStatGet(i, 0);
+   if(total <= 0.0) return 0.0;
+
+   double up = OutcomeStatGet(i, 1);
+   double down = OutcomeStatGet(i, 2);
+   double falseCount = OutcomeStatGet(i, 3);
+   double breakout = up + down;
+
+   // ブレイク発生率、方向の偏り、だまし率を0～1で評価
+   double breakoutRate = breakout / total;
+   double directionBias = (breakout > 0.0 ? MathAbs(up - down) / breakout : 0.0);
+   double falseRate = falseCount / total;
+
+   // サンプル数が少ないうちは過去実績の影響を抑える
+   double minSamples = (double)MathMax(1, InpRankingMinSamples);
+   double reliability = total / (total + minSamples);
+   double quality = (breakoutRate * 0.50 + directionBias * 0.20 - falseRate * 0.30);
+   return quality * reliability;
+  }
+
+double TransitionRankingScore(const int i)
+  {
+   double liveScore = (double)g_scan[i].score;
+   if(!InpEnableTransitionRanking) return liveScore * 10.0;
+
+   double history = TransitionHistoricalQuality(i);
+   return liveScore * 10.0 + history * MathMax(0.0, InpRankingHistoryWeight);
+  }
+
+string TransitionRankingBrief(const int i)
+  {
+   double total = OutcomeStatGet(i, 0);
+   double up = OutcomeStatGet(i, 1);
+   double down = OutcomeStatGet(i, 2);
+   double falseCount = OutcomeStatGet(i, 3);
+   double breakout = up + down;
+   double bias = (breakout > 0.0 ? MathAbs(up-down) / breakout * 100.0 : 0.0);
+   double falseRate = (total > 0.0 ? falseCount / total * 100.0 : 0.0);
+   string direction = (up > down ? "上優勢" : (down > up ? "下優勢" : "方向均衡"));
+   return StringFormat("過去%.0f件 %s 偏り%.0f%% だまし%.0f%%",
+                       total, direction, bias, falseRate);
+  }
+
+void ExportTransitionRankingCSV()
+  {
+   string folder = "GlobalMarketDashboardVerification log";
+   FolderCreate(folder);
+   string datePart = TimeToString(TimeCurrent(), TIME_DATE);
+   StringReplace(datePart, ".", "-");
+   string filename = folder + "\\CCompression_TransitionRanking_v1.40_" + datePart + ".csv";
+   int handle = FileOpen(filename, FILE_WRITE|FILE_CSV|FILE_ANSI, ',', CP_UTF8);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("TRANSITIONランキングCSVを開けません: ", filename, " error=", GetLastError());
+      return;
+     }
+   FileWrite(handle, "銘柄", "時間足", "現在Score", "ランキング評価値",
+             "過去件数", "上方", "下方", "だまし", "ブレイク率(%)",
+             "方向偏り(%)", "だまし率(%)", "評価方向");
+   for(int i=0; i<g_scanTotal; i++)
+     {
+      double total = OutcomeStatGet(i,0);
+      double up = OutcomeStatGet(i,1);
+      double down = OutcomeStatGet(i,2);
+      double falseCount = OutcomeStatGet(i,3);
+      double breakout = up + down;
+      double breakoutRate = (total>0.0 ? breakout/total*100.0 : 0.0);
+      double bias = (breakout>0.0 ? MathAbs(up-down)/breakout*100.0 : 0.0);
+      double falseRate = (total>0.0 ? falseCount/total*100.0 : 0.0);
+      string direction = (up>down ? "上優勢" : (down>up ? "下優勢" : "方向均衡"));
+      string tf = EnumToString(g_scan[i].tf);
+      StringReplace(tf,"PERIOD_","");
+      FileWrite(handle, g_scan[i].symbol, tf, g_scan[i].score,
+                DoubleToString(TransitionRankingScore(i),2), (int)total,
+                (int)up, (int)down, (int)falseCount,
+                DoubleToString(breakoutRate,1), DoubleToString(bias,1),
+                DoubleToString(falseRate,1), direction);
+     }
+   FileClose(handle);
+   Print("TRANSITIONランキングCSVを保存しました: MQL5/Files/", filename);
+  }
+
+string OutcomeStatisticsText(const int i)
+  {
+   double total = OutcomeStatGet(i, 0);
+   double up = OutcomeStatGet(i, 1);
+   double down = OutcomeStatGet(i, 2);
+   string tf = EnumToString(g_scan[i].tf);
+   StringReplace(tf, "PERIOD_", "");
+   string out = "\r\n【v1.40 累積TRANSITION統計】\r\n";
+   out += StringFormat("%s %s / 完了 %.0f件\r\n", g_scan[i].symbol, tf, total);
+   out += StringFormat("上方 %.0f / 下方 %.0f / だまし %.0f / 不発 %.0f / 方向感なし %.0f / 未確定 %.0f\r\n",
+                       up, down, OutcomeStatGet(i,3), OutcomeStatGet(i,4),
+                       OutcomeStatGet(i,5), OutcomeStatGet(i,6));
+   out += StringFormat("ブレイク発生率: %.1f%%\r\n",
+                       (total > 0.0 ? (up+down)/total*100.0 : 0.0));
+   out += "開始Score別（Score: 件数 / 上方 / 下方 / だまし）\r\n";
+   for(int score=0; score<=8; score++)
+     {
+      double n = OutcomeStatGet(i, 0, score);
+      if(n <= 0.0) continue;
+      out += StringFormat("%d: %.0f / %.0f / %.0f / %.0f\r\n", score, n,
+                          OutcomeStatGet(i,1,score), OutcomeStatGet(i,2,score),
+                          OutcomeStatGet(i,3,score));
+     }
+   return out;
+  }
+
+void ExportOutcomeSummaryCSV()
+  {
+   string folder = "GlobalMarketDashboardVerification log";
+   FolderCreate(folder);
+   string datePart = TimeToString(TimeCurrent(), TIME_DATE);
+   StringReplace(datePart, ".", "-");
+   string filename = folder + "\\CCompression_OutcomeSummary_v1.40_" + datePart + ".csv";
+   int handle = FileOpen(filename, FILE_WRITE|FILE_CSV|FILE_ANSI, ',', CP_UTF8);
+   if(handle == INVALID_HANDLE)
+     {
+      PrintFormat("v1.40統計CSVを開けません: %s / error=%d", filename, GetLastError());
+      return;
+     }
+   FileWrite(handle, "集計種別", "銘柄", "時間足", "開始Score", "合計",
+             "上方ブレイク", "下方ブレイク", "だまし候補", "不発",
+             "方向感なし", "方向未確定", "ブレイク発生率(%)");
+   for(int i=0; i<g_scanTotal; i++)
+     {
+      string tf = EnumToString(g_scan[i].tf);
+      StringReplace(tf, "PERIOD_", "");
+      double total = OutcomeStatGet(i,0);
+      if(total > 0.0)
+        {
+         double up = OutcomeStatGet(i,1), down = OutcomeStatGet(i,2);
+         FileWrite(handle, "銘柄・時間足合計", g_scan[i].symbol, tf, "", (int)total,
+                   (int)up, (int)down, (int)OutcomeStatGet(i,3), (int)OutcomeStatGet(i,4),
+                   (int)OutcomeStatGet(i,5), (int)OutcomeStatGet(i,6),
+                   DoubleToString((up+down)/total*100.0,1));
+        }
+      for(int score=0; score<=8; score++)
+        {
+         double n = OutcomeStatGet(i,0,score);
+         if(n <= 0.0) continue;
+         double upS = OutcomeStatGet(i,1,score), downS = OutcomeStatGet(i,2,score);
+         FileWrite(handle, "開始Score別", g_scan[i].symbol, tf, score, (int)n,
+                   (int)upS, (int)downS, (int)OutcomeStatGet(i,3,score),
+                   (int)OutcomeStatGet(i,4,score), (int)OutcomeStatGet(i,5,score),
+                   (int)OutcomeStatGet(i,6,score),
+                   DoubleToString((upS+downS)/n*100.0,1));
+        }
+     }
+   FileClose(handle);
+   Print("v1.40累積統計CSVを保存しました: MQL5/Files/", filename);
+  }
+
+string LoadOutcomeText(const int code)
+  {
+   if(code == 1) return "上方ブレイク";
+   if(code == 2) return "下方ブレイク";
+   if(code == 3) return "だまし候補";
+   if(code == 4) return "不発";
+   if(code == 5) return "方向感なし";
+   if(code == 6) return "方向未確定";
+   return "";
+  }
+
+void LoadLastOutcomes()
+  {
+   for(int i=0; i<g_scanTotal; i++)
+     {
+      string timeKey = VerificationKey("OUTCOME", i);
+      string codeKey = VerificationKey("OUTCODE", i);
+      if(GlobalVariableCheck(timeKey) && GlobalVariableCheck(codeKey))
+        {
+         g_lastOutcomeTime[i] = (datetime)(long)GlobalVariableGet(timeKey);
+         g_lastOutcome[i] = LoadOutcomeText((int)GlobalVariableGet(codeKey));
+        }
+     }
+  }
+
+void VerificationLogTransitionFinish(const int i, const string reason)
+  {
+   if(!g_verification[i].active)
+      return;
+   CCOMP_VerificationEvent e = g_verification[i];
+   double upMove = MathMax(0.0, e.maxHigh - e.startPrice);
+   double downMove = MathMax(0.0, e.startPrice - e.minLow);
+   double maxMove = MathMax(upMove, downMove);
+   double maxPct = (e.startPrice != 0.0) ? maxMove / e.startPrice * 100.0 : 0.0;
+   int digits = (int)SymbolInfoInteger(g_scan[i].symbol, SYMBOL_DIGITS);
+   string tf = EnumToString(g_scan[i].tf);
+   StringReplace(tf, "PERIOD_", "");
+   datetime endBarOpen = iTime(g_scan[i].symbol, g_scan[i].tf, 1);
+   datetime endTime = (endBarOpen > 0 ? endBarOpen + PeriodSeconds(g_scan[i].tf) : TimeCurrent());
+
+   // startTime は開始足の始値時刻だが、startPrice は開始足の終値。
+   // そのため経過時間も「開始足の終値時刻」から「終了足の終値時刻」までで計算し、
+   // barsElapsed（開始足の次から数えた完了区間数）と定義をそろえる。
+   int periodSeconds = PeriodSeconds(g_scan[i].tf);
+   datetime measurementStartTime = e.startTime + periodSeconds;
+   int elapsedSeconds = (int)MathMax(0, (long)(endTime - measurementStartTime));
+   int elapsedHours = elapsedSeconds / 3600;
+   int elapsedMinutes = (elapsedSeconds % 3600) / 60;
+   string elapsedDuration = (elapsedHours > 0 ?
+                             IntegerToString(elapsedHours) + "時間" +
+                             (elapsedMinutes > 0 ? IntegerToString(elapsedMinutes) + "分" : "") :
+                             IntegerToString(elapsedMinutes) + "分");
+   string elapsed = StringFormat("%d本/%s", e.barsElapsed, elapsedDuration);
+   double endPrice = iClose(g_scan[i].symbol, g_scan[i].tf, 1);
+   double netMove = endPrice - e.startPrice;
+   double netPct = (e.startPrice != 0.0 ? netMove / e.startPrice * 100.0 : 0.0);
+   string direction = (netMove > 0.0 ? "上昇" : (netMove < 0.0 ? "下落" : "横ばい"));
+   string outcomeDetail;
+   string outcome = JudgeTransitionOutcome(e, endPrice, outcomeDetail);
+   SaveLastOutcome(i, outcome, endTime);
+   UpdateOutcomeStatistics(i, e.startScore, outcome);
+   double highLowRange = MathMax(0.0, e.maxHigh - e.minLow);
+   VerificationWriteRecord("TRANSITION_RESULT", g_scan[i].symbol, tf, VerificationTimeJST(endTime),
+                            VerificationTimeJST(e.startTime), VerificationTimeJST(endTime),
+                            "TRANSITION", IntegerToString(e.startScore),
+                            DoubleToString(maxMove, digits), DoubleToString(upMove, digits),
+                            DoubleToString(downMove, digits), DoubleToString(maxPct, 5),
+                            DoubleToString(highLowRange, digits), elapsed,
+                            DoubleToString(endPrice, digits), DoubleToString(netMove, digits),
+                            DoubleToString(netPct, 5), direction,
+                            VerificationSessionJST(endTime), reason + ";事後判定=" + outcome +
+                            ";判定根拠=" + outcomeDetail + ";開始ATR=" + DoubleToString(e.startATR, digits) +
+                            ";開始価格=" + DoubleToString(e.startPrice, digits) +
+                            ";最高値=" + DoubleToString(e.maxHigh, digits) + ";最安値=" + DoubleToString(e.minLow, digits));
+   VerificationClearEvent(i);
+  }
+
+void VerificationUpdateTransition(const int i)
+  {
+   if(!g_verification[i].active)
+      return;
+   double hi = iHigh(g_scan[i].symbol, g_scan[i].tf, 1);
+   double lo = iLow(g_scan[i].symbol, g_scan[i].tf, 1);
+   if(hi > g_verification[i].maxHigh) g_verification[i].maxHigh = hi;
+   if(lo < g_verification[i].minLow)  g_verification[i].minLow  = lo;
+   // バー数は独立カウンターで加算せず、開始足と最新確定足の位置から算出する。
+   // これにより再初期化・履歴再読込で開始時刻とカウンターがずれるのを防ぐ。
+   int startShift = iBarShift(g_scan[i].symbol, g_scan[i].tf,
+                              g_verification[i].startTime, true);
+   if(startShift < 1)
+     {
+      VerificationClearEvent(i);
+      return;
+     }
+   g_verification[i].barsElapsed = MathMax(0, startShift - 1);
+   VerificationSaveEvent(i);
+   if(g_verification[i].barsElapsed >= MathMax(1, InpTransitionMeasureBars))
+      VerificationLogTransitionFinish(i, "指定計測本数に到達");
+  }
+
+void VerificationLogSpike(const int i, const datetime eventTime, const bool isUp,
+                          const double ratio, const double z)
+  {
+   // 同じ銘柄・時間足の同一バー内で再検知されても、ログは1回だけ記録する。
+   // GlobalVariableを使うため、チャート再初期化後も重複を抑止できる。
+   datetime spikeBarTime = iTime(g_scan[i].symbol, g_scan[i].tf, 0);
+   if(spikeBarTime <= 0)
+      spikeBarTime = eventTime;
+   string spikeLogKey = VerificationKey("SPIKELOG", i);
+   datetime lastLoggedBar = (GlobalVariableCheck(spikeLogKey)
+                             ? (datetime)(long)GlobalVariableGet(spikeLogKey) : 0);
+   if(lastLoggedBar == spikeBarTime)
+      return;
+   GlobalVariableSet(spikeLogKey, (double)spikeBarTime);
+
+   string tf = EnumToString(g_scan[i].tf);
+   StringReplace(tf, "PERIOD_", "");
+   VerificationWriteRecord("SUDDEN_MOVE", g_scan[i].symbol, tf, VerificationTimeJST(eventTime),
+                            "", "", (isUp ? "急変上昇" : "急変下落"), IntegerToString(g_scan[i].score),
+                            "", "", "", "", "", "検知中", "", "", "", "",
+                            VerificationSessionJST(eventTime),
+                            StringFormat("ATR比=%.2f; ROC Z=%+.2f; 検知ロジックは変更なし", ratio, z));
+  }
+
+int OnInit()
+  {
+   g_symbolCount = ParseSymbols(InpSymbols, g_symbols);
+
+   ENUM_TIMEFRAMES tmp[];
+   ArrayResize(tmp, 7);
+   int c = 0;
+   if(ScanD1)  tmp[c++] = PERIOD_D1;
+   if(ScanH4)  tmp[c++] = PERIOD_H4;
+   if(ScanH1)  tmp[c++] = PERIOD_H1;
+   if(ScanM30) tmp[c++] = PERIOD_M30;
+   if(ScanM15) tmp[c++] = PERIOD_M15;
+   if(ScanM5)  tmp[c++] = PERIOD_M5;
+   if(ScanM1)  tmp[c++] = PERIOD_M1;
+   g_tfCount = c;
+   ArrayResize(g_tfList, c);
+   for(int i = 0; i < c; i++) g_tfList[i] = tmp[i];
+
+   if(g_symbolCount == 0 || g_tfCount == 0)
+     {
+      Print("CCompression_Scanner: 監視対象の通貨ペアまたは時間足が0件です");
+      return(INIT_FAILED);
+     }
+
+   g_scanTotal = g_symbolCount * g_tfCount;
+   ArrayResize(g_scan, g_scanTotal);
+
+   ArrayResize(g_spikeUntil, g_scanTotal);
+   ArrayResize(g_spikeUp,    g_scanTotal);
+   ArrayResize(g_spikeRatio, g_scanTotal);
+   ArrayResize(g_spikeZ,     g_scanTotal);
+   ArrayResize(g_suppressed, g_scanTotal);
+   ArrayResize(g_spikeWasDetected, g_scanTotal);
+   ArrayResize(g_verification, g_scanTotal);
+   ArrayResize(g_lastOutcome, g_scanTotal);
+   ArrayResize(g_lastOutcomeTime, g_scanTotal);
+   ArrayResize(g_transitionHoldRemaining, g_scanTotal);
+   ArrayResize(g_hasUpdatedSinceInit, g_scanTotal);
+   for(int k = 0; k < g_scanTotal; k++)
+     {
+      g_spikeUntil[k] = 0;
+      g_spikeUp[k]    = false;
+      g_spikeRatio[k] = 0.0;
+      g_spikeZ[k]     = 0.0;
+      g_suppressed[k] = false;
+      g_spikeWasDetected[k] = false;
+      g_transitionHoldRemaining[k] = 0;
+      g_hasUpdatedSinceInit[k] = false;
+      g_verification[k].active = false;
+      g_verification[k].startTime = 0;
+      g_verification[k].startPrice = 0.0;
+      g_verification[k].maxHigh = 0.0;
+      g_verification[k].minLow = 0.0;
+      g_verification[k].barsElapsed = 0;
+      g_verification[k].startScore = 0;
+      g_verification[k].startATR = 0.0;
+      g_lastOutcome[k] = "";
+      g_lastOutcomeTime[k] = 0;
+     }
+
+   for(int si = 0; si < g_symbolCount; si++)
+      for(int ti = 0; ti < g_tfCount; ti++)
+        {
+         int idx = si * g_tfCount + ti;
+         if(!CCOMP_InitInstance(g_scan[idx], g_symbols[si], g_tfList[ti]))
+            PrintFormat("初期化失敗: %s %s", g_symbols[si], EnumToString(g_tfList[ti]));
+        }
+
+   LoadSpikeStates();   // チャート切替で読み込み直された場合に急変状態を引き継ぐ
+   LoadTransitionHoldStates(); // チャート切替後もTRANSITION表示の残り本数を引き継ぐ
+   VerificationLogOpen();
+   VerificationLoadEvents(); // チャート切替後も計測中のTRANSITION検証を引き継ぐ
+   LoadLastOutcomes();
+
+   EventSetTimer(MathMax(1, RefreshSeconds));
+   CreateReportButton();
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
+   ObjectDelete(0, CCOMP_REPORT_BUTTON);
+   for(int i = 0; i < g_scanTotal; i++)
+      CCOMP_ReleaseInstance(g_scan[i]);
+   if(g_verificationLog != INVALID_HANDLE)
+     {
+      FileFlush(g_verificationLog);
+      FileClose(g_verificationLog);
+      g_verificationLog = INVALID_HANDLE;
+     }
+   ObjectsDeleteAll(0, "CCOMP_Scan_");
+   ChartRedraw(0);
+  }
+
+//+------------------------------------------------------------------+
+//| 表示対象とすべき状態かどうかを入力設定に従って判定                 |
+//+------------------------------------------------------------------+
+bool ShouldDisplay(const CCOMP_STATE st)
+  {
+   if(st == CCOMP_NORMAL) return false;
+   if(st == CCOMP_TRANSITION) return ShowTransition;
+   if(ShowOnlyStrongOrAbove)
+      return (st == CCOMP_STRONG_COMPRESSION || st == CCOMP_TIGHT_COMPRESSION);
+   return ShowCompression; // COMPRESSION / STRONG / TIGHT すべて含む
+  }
+
+//+------------------------------------------------------------------+
+//| 行の表示用ラベルを作成/更新                                        |
+//+------------------------------------------------------------------+
+void DrawRow(const int r, const string text, const color clr)
+  {
+   string name = "CCOMP_Scan_Row_" + IntegerToString(r);
+   if(ObjectFind(0, name) < 0)
+     {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+      ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+     }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, PanelX);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, PanelY + 18 + r * 14);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+  }
+
+//+------------------------------------------------------------------+
+//| 全インスタンス更新 → フィルタ・ソート → 描画                      |
+//+------------------------------------------------------------------+
+void UpdateAndDraw()
+  {
+   for(int i = 0; i < g_scanTotal; i++)
+     {
+      CCOMP_STATE oldState = g_scan[i].state;
+      bool wasReady = g_scan[i].ready;
+      bool hadActiveTransition = g_verification[i].active;
+      bool updated = CCOMP_UpdateInstance(g_scan[i]);
+      if(updated)
+        {
+         datetime closedBarTime = g_scan[i].lastBarTime;
+         bool firstUpdateAfterInit = !g_hasUpdatedSinceInit[i];
+
+         // 再初期化後の最初の計算は履歴データの読み込み直しであり、
+         // 新しい確定足が実際に経過したわけではないため、保持本数を減らさない。
+         // これにより、行クリックでチャートが切り替わるたびに保持期間が消費される問題を防ぐ。
+         if(g_scan[i].state == CCOMP_TRANSITION)
+            g_transitionHoldRemaining[i] = MathMax(1, InpTransitionDisplayHoldBars);
+         else if(g_transitionHoldRemaining[i] > 0 && !firstUpdateAfterInit)
+            g_transitionHoldRemaining[i]--;
+         SaveTransitionHoldState(i);
+         g_hasUpdatedSinceInit[i] = true;
+
+         // 計測中イベントの更新も、再初期化後の初回計算では行わない。
+         // 初回は過去の確定足を読み込み直しているだけなので、計測本数を誤って増やさない。
+         if(hadActiveTransition && !firstUpdateAfterInit)
+            VerificationUpdateTransition(i);
+
+         if(InpEnableVerificationLog && InpLogStateChanges && wasReady &&
+            oldState != g_scan[i].state)
+            VerificationLogStateChange(i, oldState, g_scan[i].state, closedBarTime);
+
+         if(g_scan[i].state == CCOMP_TRANSITION && oldState != CCOMP_TRANSITION)
+           {
+            if(g_verification[i].active && g_verification[i].startTime != closedBarTime)
+               VerificationLogTransitionFinish(i, "次のTRANSITIONが発生");
+            if((InpEnableVerificationLog || InpEnableOutcomeJudge) && !g_verification[i].active)
+               VerificationLogTransitionStart(i, closedBarTime);
+           }
+        }
+     }
+
+   //--- 急変検知(圧縮中の行が対象。SpikeShowAlways=trueなら全行) ---
+   datetime nowT = TimeCurrent();
+   if(UseSpikeOverride)
+     {
+      for(int i = 0; i < g_scanTotal; i++)
+        {
+         if(!g_scan[i].ready) continue;
+
+         // 圧縮が一度NORMALに戻ったら抑制を解除(次に圧縮が再形成されたら再び表示する)
+         if(g_suppressed[i] && g_scan[i].state == CCOMP_NORMAL)
+           {
+            g_suppressed[i] = false;
+            SaveSuppressed(i, false);
+           }
+
+         if(g_scan[i].state == CCOMP_NORMAL && !SpikeShowAlways) continue;
+
+         bool isSp, isUp;
+         double ratio, z;
+         if(!SMD_CheckSpike(g_scan[i].symbol, g_scan[i].tf, g_scan[i].atrHandle, isSp, isUp, ratio, z))
+            continue;
+
+         if(isSp && !g_spikeWasDetected[i])
+           {
+            if(InpEnableVerificationLog)
+               VerificationLogSpike(i, TimeCurrent(), isUp, ratio, z);
+            g_spikeWasDetected[i] = true;
+           }
+         else if(!isSp)
+            g_spikeWasDetected[i] = false;
+
+         if(isSp)
+           {
+            g_spikeUntil[i] = nowT + SpikeHoldBars * PeriodSeconds(g_scan[i].tf);
+            g_spikeUp[i]    = isUp;
+            g_spikeRatio[i] = ratio;
+            g_spikeZ[i]     = z;
+            // 圧縮中だった行は、急変で圧縮表示を解除(NORMALに戻るまで圧縮としては出さない)
+            SaveSpikeState(i);
+            if(g_scan[i].state != CCOMP_NORMAL)
+              {
+               g_suppressed[i] = true;
+               SaveSuppressed(i, true);
+              }
+           }
+        }
+     }
+
+   //--- フィルタして対象indexと優先度キーを収集 ---
+   int    candIdx[];
+   double candKey[];
+   int    candKind[];   // 0=圧縮表示 / 1=急変表示
+   ArrayResize(candIdx, g_scanTotal);
+   ArrayResize(candKey, g_scanTotal);
+   ArrayResize(candKind, g_scanTotal);
+   int n = 0;
+   int nSpike = 0;
+   for(int i = 0; i < g_scanTotal; i++)
+     {
+      if(!g_scan[i].ready) continue;
+
+      // 急変表示(最優先)。保持期間中は圧縮表示の代わりにこちらを出す
+      if(UseSpikeOverride && nowT < g_spikeUntil[i])
+        {
+         candIdx[n]  = i;
+         candKind[n] = 1;
+         candKey[n]  = 200.0 + MathMin(g_spikeRatio[i], 50.0);
+         n++;
+         nSpike++;
+         continue;
+        }
+
+      // 急変で圧縮表示を解除された行は、圧縮がNORMALに戻るまで出さない
+      if(UseSpikeOverride && g_suppressed[i]) continue;
+
+      CCOMP_STATE rowState = DisplayStateForRow(i);
+      if(!ShouldDisplay(rowState)) continue;
+      candIdx[n]  = i;
+      candKind[n] = 0;
+      // TRANSITIONは圧縮表示の中で最優先、それ以外はScoreの高い順
+      candKey[n]  = (rowState == CCOMP_TRANSITION) ? (100.0 + TransitionRankingScore(i)) : (double)g_scan[i].score;
+      n++;
+     }
+
+   //--- 優先度キー降順にソート(単純選択ソート。件数は多くても数百件程度なので十分) ---
+   for(int a = 0; a < n - 1; a++)
+     {
+      int best = a;
+      for(int b = a + 1; b < n; b++)
+        {
+         if(candKey[b] > candKey[best])
+            best = b;
+         else if(candKey[b] == candKey[best])
+           {
+            // 同順位なら短い時間足を上段に、時間足も同じなら通貨ペア名順
+            int pb = PeriodSeconds(g_scan[candIdx[b]].tf);
+            int pBest = PeriodSeconds(g_scan[candIdx[best]].tf);
+            if(pb < pBest)
+               best = b;
+            else if(pb == pBest && g_scan[candIdx[b]].symbol < g_scan[candIdx[best]].symbol)
+               best = b;
+           }
+        }
+      if(best != a)
+        {
+         double tk = candKey[a];  candKey[a]  = candKey[best];  candKey[best]  = tk;
+         int    ti = candIdx[a];  candIdx[a]  = candIdx[best];  candIdx[best]  = ti;
+         int    tn = candKind[a]; candKind[a] = candKind[best]; candKind[best] = tn;
+        }
+     }
+
+   int shown = MathMin(n, MaxRows);
+
+   //--- タイトル行 ---
+   string title = StringFormat("CCompression Scanner v1.40  (圧縮%d件 急変%d件 / 全%d組)", n - nSpike, nSpike, g_scanTotal);
+   {
+      string tname = "CCOMP_Scan_Title";
+      if(ObjectFind(0, tname) < 0)
+        {
+         ObjectCreate(0, tname, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, tname, OBJPROP_FONTSIZE, 10);
+         ObjectSetString(0, tname, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, tname, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, tname, OBJPROP_BACK, false);
+         ObjectSetInteger(0, tname, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, tname, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+        }
+      ObjectSetInteger(0, tname, OBJPROP_XDISTANCE, PanelX);
+      ObjectSetInteger(0, tname, OBJPROP_YDISTANCE, PanelY);
+      ObjectSetString(0, tname, OBJPROP_TEXT, title);
+      ObjectSetInteger(0, tname, OBJPROP_COLOR, clrWhite);
+   }
+   //--- 既存行を一旦全削除してから再構築(件数が増減するため) ---
+   ObjectsDeleteAll(0, "CCOMP_Scan_Row_");
+   ArrayResize(g_rowSymbol, shown);
+   ArrayResize(g_rowTF, shown);
+   g_rowCount = shown;
+
+   for(int r = 0; r < shown; r++)
+     {
+      int idx = candIdx[r];
+      CCOMP_Instance inst = g_scan[idx];
+
+      string tfName = EnumToString(inst.tf);
+      StringReplace(tfName, "PERIOD_", "");
+
+      string line;
+      color  rowClr;
+      if(candKind[r] == 1)
+        {
+         // 急変表示: 圧縮表示の代わりに方向つきで表示する
+         line = StringFormat("%-9s %-4s %-20s ATR比%.1f Z%+.1f",
+            inst.symbol, tfName, g_spikeUp[idx] ? "急変 ↑ (上昇)" : "急変 ↓ (下落)",
+            g_spikeRatio[idx], g_spikeZ[idx]);
+         rowClr = g_spikeUp[idx] ? SpikeUpColor : SpikeDownColor;
+        }
+      else
+        {
+         CCOMP_STATE rowState = DisplayStateForRow(idx);
+         string stateLabel = CCOMP_StateText(rowState);
+         if(rowState == CCOMP_TRANSITION && inst.state != CCOMP_TRANSITION)
+            stateLabel = "TRANSITION*"; // * = 表示保持中（判定そのものは終了）
+         string outcomeLabel = (g_lastOutcome[idx] != "" ? "  前回:" + g_lastOutcome[idx] : "");
+         if(rowState == CCOMP_TRANSITION)
+           {
+            int transitionRank = 1;
+            for(int q=0; q<r; q++)
+              {
+               int prevIdx = candIdx[q];
+               if(candKind[q] == 0 && DisplayStateForRow(prevIdx) == CCOMP_TRANSITION)
+                  transitionRank++;
+              }
+            line = StringFormat("#%02d %-8s %-4s %-13s Sc%d Δ%+d Age%d",
+                                transitionRank, inst.symbol, tfName, stateLabel,
+                                inst.score, inst.delta, inst.age);
+            line += " | " + TransitionRankingBrief(idx);
+           }
+         else
+            line = StringFormat("%-9s %-4s %-20s Sc%d Δ%+d Age%d%s",
+                                inst.symbol, tfName, stateLabel, inst.score, inst.delta, inst.age, outcomeLabel);
+         rowClr = CCOMP_StateColor(rowState);
+        }
+
+      DrawRow(r, line, rowClr);
+
+      g_rowSymbol[r] = inst.symbol;
+      g_rowTF[r]     = inst.tf;
+     }
+
+   if(n > shown)
+     {
+      string moreName = "CCOMP_Scan_More";
+      if(ObjectFind(0, moreName) < 0)
+        {
+         ObjectCreate(0, moreName, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, moreName, OBJPROP_FONTSIZE, 9);
+         ObjectSetString(0, moreName, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, moreName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, moreName, OBJPROP_BACK, false);
+         ObjectSetInteger(0, moreName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, moreName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+        }
+      ObjectSetInteger(0, moreName, OBJPROP_XDISTANCE, PanelX);
+      ObjectSetInteger(0, moreName, OBJPROP_YDISTANCE, PanelY + 18 + shown * 14);
+      ObjectSetString(0, moreName, OBJPROP_TEXT, StringFormat("...他 %d件", n - shown));
+      ObjectSetInteger(0, moreName, OBJPROP_COLOR, clrGray);
+     }
+   else
+      ObjectDelete(0, "CCOMP_Scan_More");
+
+   DrawDetailPanel();
+
+   ChartRedraw(0);
+  }
+
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total, const int prev_calculated,
+                 const datetime &time[], const double &open[], const double &high[],
+                 const double &low[], const double &close[],
+                 const long &tick_volume[], const long &volume[], const int &spread[])
+  {
+   UpdateAndDraw();
+   // 初回描画後にもボタンの存在を確認する
+   if(ObjectFind(0, CCOMP_REPORT_BUTTON) < 0)
+      CreateReportButton();
+   return(rates_total);
+  }
+
+//+------------------------------------------------------------------+
+void OnTimer()
+  {
+   UpdateAndDraw();
+   // 描画更新でボタンが失われた場合も再作成する
+   if(ObjectFind(0, CCOMP_REPORT_BUTTON) < 0)
+      CreateReportButton();
+  }
+
+//+------------------------------------------------------------------+
+//| 行クリックでその通貨ペア・時間足にチャートを切り替える             |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| 検証レポートボタン                                               |
+//+------------------------------------------------------------------+
+string CCOMP_REPORT_BUTTON = "CCOMP_Report_Button";
+
+void CreateReportButton()
+  {
+   if(ObjectFind(0, CCOMP_REPORT_BUTTON) >= 0)
+      ObjectDelete(0, CCOMP_REPORT_BUTTON);
+   if(!ObjectCreate(0, CCOMP_REPORT_BUTTON, OBJ_BUTTON, 0, 0, 0))
+     {
+      Print("CCompression: レポートボタンを作成できません");
+      return;
+     }
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_XDISTANCE, 360);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_YDISTANCE, 8);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_XSIZE, 150);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_YSIZE, 26);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_BGCOLOR, clrDarkSlateGray);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_BORDER_COLOR, clrSilver);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, CCOMP_REPORT_BUTTON, OBJPROP_TEXT, "検証レポートを保存");
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_SELECTABLE, true);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_BACK, false);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_ZORDER, 1000);
+   ChartRedraw(0);
+  }
+
+string CCOMP_ReportStateText(const CCOMP_Instance &inst)
+  {
+   return StringFormat("【解説】%s %s 状態: %s Score %d/8",
+                       inst.symbol, EnumToString(inst.tf), CCOMP_StateText(inst.state), inst.score);
+  }
+
+void ExportCurrentReport()
+  {
+   ENUM_TIMEFRAMES curTF = (ENUM_TIMEFRAMES)Period();
+   int idx = -1;
+   for(int i = 0; i < g_scanTotal; i++)
+      if(g_scan[i].symbol == _Symbol && g_scan[i].tf == curTF)
+        {
+         idx = i;
+         break;
+        }
+
+   string report = "【CCompression 検証レポート】\r\n";
+   report += "日時: " + VerificationTimeJST(TimeCurrent()) + " JST\r\n";
+   report += "通貨ペア: " + _Symbol + "\r\n";
+   report += "時間足: " + EnumToString(curTF) + "\r\n";
+
+   // 価格情報：出力時のBidと直近確定足(shift=1)を分けて記録する。
+   int priceDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   MqlTick currentTick;
+   if(SymbolInfoTick(_Symbol, currentTick))
+      report += "現在Bid価格: " + DoubleToString(currentTick.bid, priceDigits) + "\r\n";
+   else
+      report += "現在Bid価格: 取得できませんでした\r\n";
+
+   datetime closedBarTime = iTime(_Symbol, curTF, 1);
+   double closedHigh = iHigh(_Symbol, curTF, 1);
+   double closedLow  = iLow(_Symbol, curTF, 1);
+   double closedOpen = iOpen(_Symbol, curTF, 1);
+   double closedClose= iClose(_Symbol, curTF, 1);
+   if(closedBarTime > 0)
+     {
+      report += "直近確定足時刻: " + TimeToString(closedBarTime, TIME_DATE|TIME_MINUTES) + "\r\n";
+      report += "直近確定足 OHLC: " + DoubleToString(closedOpen, priceDigits) + " / "
+                + DoubleToString(closedHigh, priceDigits) + " / "
+                + DoubleToString(closedLow, priceDigits) + " / "
+                + DoubleToString(closedClose, priceDigits) + "\r\n";
+      report += "  Open / High / Low / Close の順\r\n";
+     }
+   else
+      report += "直近確定足価格: 取得できませんでした\r\n";
+
+   if(idx < 0 || !g_scan[idx].ready)
+     {
+      report += "状態: 監視対象外または計算中\r\n";
+      report += "※設定で該当時間足が有効か確認してください。\r\n";
+     }
+   else
+     {
+      CCOMP_Instance inst = g_scan[idx];
+      report += "状態: " + CCOMP_StateText(inst.state) + "\r\n";
+      report += StringFormat("Score: %d/8\r\n", inst.score);
+      report += StringFormat("Delta: %+d\r\n", inst.delta);
+      report += StringFormat("Age: %d\r\n", inst.age);
+      report += "\r\n";
+      report += StringFormat("ATR: %d/2\r\n", inst.atrScore);
+      report += StringFormat("ATR%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
+                             inst.atrPct, inst.lookback, inst.atrPctile);
+      report += StringFormat("BB幅: %d/2\r\n", inst.bbScore);
+      report += StringFormat("BB幅%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
+                             inst.bbWidthPct, inst.lookback, inst.bbPctile);
+      report += StringFormat("Range: %d/2\r\n", inst.rangeScore);
+      report += StringFormat("Range%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
+                             inst.range20Pct, inst.lookback, inst.rangePctile);
+      report += StringFormat("ADX: %d/2\r\n", inst.adxScore);
+      report += StringFormat("ADX値: %.1f\r\n", inst.adxValue);
+      report += "\r\n";
+      report += "目視観察: （必要に応じて追記）\r\n";
+      report += "ブレイク方向: 未確認\r\n";
+      report += "結果: 未判定\r\n";
+     }
+
+   if(idx >= 0)
+      report += OutcomeStatisticsText(idx);
+
+   string stamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES|TIME_SECONDS);
+   StringReplace(stamp, ".", "");
+   StringReplace(stamp, ":", "");
+   StringReplace(stamp, " ", "_");
+   // 保存先: MQL5/Files/GlobalMarketDashboardVerification log/
+   string reportFolder = "GlobalMarketDashboardVerification log";
+   ResetLastError();
+   FolderCreate(reportFolder); // 既に存在する場合も、そのまま保存を試みる
+   string filename = reportFolder + "\\\\CCompression_Report_" + _Symbol + "_" + stamp + ".txt";
+   ResetLastError();
+   int handle = FileOpen(filename, FILE_WRITE|FILE_TXT|FILE_UNICODE);
+   if(handle == INVALID_HANDLE)
+     {
+      PrintFormat("CCompression: レポート保存失敗。パス=MQL5/Files/%s、エラー=%d",
+                  filename, GetLastError());
+      Alert("CCompressionレポートの保存に失敗しました。エキスパートタブを確認してください。");
+      return;
+     }
+   FileWriteString(handle, report);
+   FileClose(handle);
+   Print("CCompression: レポートを保存しました: MQL5/Files/", filename);
+   ExportOutcomeSummaryCSV();
+   if(InpExportRankingCSV) ExportTransitionRankingCSV();
+   Alert("個別レポート・v1.40集計CSVを保存しました。ランキングCSVの設定も確認してください。保存先: MQL5/Files/GlobalMarketDashboardVerification log/");
+  }
+
+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+  {
+   if(id != CHARTEVENT_OBJECT_CLICK) return;
+
+   if(sparam == CCOMP_REPORT_BUTTON)
+     {
+      ExportCurrentReport();
+      ObjectSetInteger(0, CCOMP_REPORT_BUTTON, OBJPROP_STATE, false);
+      return;
+     }
+
+   string prefix = "CCOMP_Scan_Row_";
+   if(StringFind(sparam, prefix) != 0) return;
+
+   string idxStr = StringSubstr(sparam, StringLen(prefix));
+   int r = (int)StringToInteger(idxStr);
+   if(r < 0 || r >= g_rowCount) return;
+
+   string sym          = g_rowSymbol[r];
+   ENUM_TIMEFRAMES tf   = g_rowTF[r];
+
+   if(OpenInNewChart)
+     {
+      long newChartId = ChartOpen(sym, tf);
+      if(newChartId == 0) Print("チャートを開けませんでした: ", sym);
+     }
+   else
+     {
+      bool ok = ChartSetSymbolPeriod(0, sym, tf);
+      if(!ok) Print("通貨ペア/時間足の切り替えに失敗しました: ", sym, " ", EnumToString(tf));
+     }
+  }
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| 解説パネル                                                         |
+//| チャートに表示中の(通貨ペア, 時間足)について、各指標の状態を       |
+//| 日本語で解説する。行クリックで切り替えた直後もこの内容が表示される  |
+//+------------------------------------------------------------------+
+string GetATRExplanation(const int score)
+  {
+   if(score >= 2) return("1本の値動き：かなり小さい");
+   if(score == 1) return("1本の値動き：やや小さい");
+   return("1本の値動き：通常～大きめ");
+  }
+
+string GetBBExplanation(const int score)
+  {
+   if(score >= 2) return("価格の広がり：かなり狭い");
+   if(score == 1) return("価格の広がり：やや狭い");
+   return("価格の広がり：通常～大きい");
+  }
+
+string GetRangeExplanation(const int score)
+  {
+   if(score >= 2) return("20期間の活動範囲：かなり狭い");
+   if(score == 1) return("20期間の活動範囲：やや狭い");
+   return("20期間の活動範囲：通常～大きい");
+  }
+
+string GetADXExplanation(const int score)
+  {
+   if(score >= 2) return("トレンド強度：弱い");
+   if(score == 1) return("トレンド強度：やや弱い");
+   return("トレンド強度：強め");
+  }
+
+string GetStateExplanation(const CCOMP_STATE st)
+  {
+   switch(st)
+     {
+      case CCOMP_NORMAL:             return("通常の値動きです。圧縮は見られません");
+      case CCOMP_COMPRESSION:        return("値動きが縮み始めています（弱い圧縮）");
+      case CCOMP_STRONG_COMPRESSION: return("値動きがかなり縮んでいます（強い圧縮）");
+      case CCOMP_TIGHT_COMPRESSION:  return("値動きが極めて縮んでいます（非常に強い圧縮）");
+      case CCOMP_TRANSITION:         return("強い圧縮から値幅が広がり始めました（方向は不明）");
+     }
+   return("");
+  }
+
+string GetDeltaExplanation(const int delta)
+  {
+   if(delta > 0) return("前回よりScoreが上がり、圧縮が強まっています");
+   if(delta < 0) return("前回よりScoreが下がり、圧縮が弱まっています");
+   return("前回からScoreの変化はありません");
+  }
+
+int g_detailLineCount = 0;   // 前回描画した解説行数(余った行を消すため)
+
+//--- 解説1行を描画。j=上から何行目か、total=全行数
+void SetDetailLine(const int j, const int total, const string text, const color clr)
+  {
+   string name = "CCOMP_Scan_Detail_" + IntegerToString(j);
+   bool lower = (DetailCorner == CORNER_LEFT_LOWER  || DetailCorner == CORNER_RIGHT_LOWER);
+   bool right = (DetailCorner == CORNER_RIGHT_UPPER || DetailCorner == CORNER_RIGHT_LOWER);
+
+   if(ObjectFind(0, name) < 0)
+     {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+      ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+     }
+
+   ENUM_ANCHOR_POINT anchor;
+   if(lower) anchor = right ? ANCHOR_RIGHT_LOWER : ANCHOR_LEFT_LOWER;
+   else      anchor = right ? ANCHOR_RIGHT_UPPER : ANCHOR_LEFT_UPPER;
+
+   int lineH = 16;
+   int y = lower ? DetailY + (total - 1 - j) * lineH : DetailY + j * lineH;
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, DetailCorner);
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, anchor);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, DetailX);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+  }
+
+void DrawDetailPanel()
+  {
+   if(!ShowDetailPanel)
+     {
+      ObjectsDeleteAll(0, "CCOMP_Scan_Detail_");
+      g_detailLineCount = 0;
+      return;
+     }
+
+   string lines[16];
+   color  clrs[16];
+   int    L = 0;
+
+   ENUM_TIMEFRAMES curTF = (ENUM_TIMEFRAMES)_Period;
+   string tfName = EnumToString(curTF);
+   StringReplace(tfName, "PERIOD_", "");
+
+   int idx = -1;
+   for(int i = 0; i < g_scanTotal; i++)
+      if(g_scan[i].symbol == _Symbol && g_scan[i].tf == curTF) { idx = i; break; }
+
+   if(idx < 0)
+     {
+      lines[L] = StringFormat("【解説】%s %s は監視対象外です（時間足の選択ONを確認してください）", _Symbol, tfName);
+      clrs[L]  = clrGray; L++;
+     }
+   else if(!g_scan[idx].ready)
+     {
+      lines[L] = StringFormat("【解説】%s %s 計算中...", _Symbol, tfName);
+      clrs[L]  = clrGray; L++;
+     }
+   else
+     {
+      CCOMP_Instance inst = g_scan[idx];
+      color base = clrSilver;
+
+      lines[L] = StringFormat("【解説】%s %s   状態: %s   Score %d/8",
+                              inst.symbol, tfName, CCOMP_StateText(inst.state), inst.score);
+      clrs[L]  = CCOMP_StateColor(inst.state); L++;
+
+      lines[L] = "  " + GetStateExplanation(inst.state);
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  ATR    %d/2  %s  (ATR%% %.3f / 過去%d本中 下位%.0f%%)",
+                              inst.atrScore, GetATRExplanation(inst.atrScore),
+                              inst.atrPct, inst.lookback, inst.atrPctile);
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  BB幅   %d/2  %s  (BB幅%% %.3f / 過去%d本中 下位%.0f%%)",
+                              inst.bbScore, GetBBExplanation(inst.bbScore),
+                              inst.bbWidthPct, inst.lookback, inst.bbPctile);
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  Range  %d/2  %s  (Range%% %.3f / 過去%d本中 下位%.0f%%)",
+                              inst.rangeScore, GetRangeExplanation(inst.rangeScore),
+                              inst.range20Pct, inst.lookback, inst.rangePctile);
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  ADX    %d/2  %s  (ADX %.1f)",
+                              inst.adxScore, GetADXExplanation(inst.adxScore), inst.adxValue);
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  Delta %+d : %s", inst.delta, GetDeltaExplanation(inst.delta));
+      clrs[L]  = base; L++;
+
+      lines[L] = StringFormat("  Age %d : 同じ状態が%d本続いています（%s足の確定足ベース）",
+                              inst.age, inst.age, tfName);
+      clrs[L]  = base; L++;
+
+      // 急変との連携状況
+      if(UseSpikeOverride && TimeCurrent() < g_spikeUntil[idx])
+        {
+         lines[L] = StringFormat("  急変検知中: %s  ATR比%.1f Z%+.1f  （一覧では圧縮表示を解除し急変として表示）",
+                                 g_spikeUp[idx] ? "上昇" : "下落", g_spikeRatio[idx], g_spikeZ[idx]);
+         clrs[L]  = g_spikeUp[idx] ? SpikeUpColor : SpikeDownColor; L++;
+        }
+      else if(UseSpikeOverride && g_suppressed[idx])
+        {
+         lines[L] = "  急変により圧縮表示を解除中（圧縮がNORMALに戻るまで一覧には出ません）";
+         clrs[L]  = clrGray; L++;
+        }
+     }
+
+   for(int j = 0; j < L; j++)
+      SetDetailLine(j, L, lines[j], clrs[j]);
+
+   // 前回より行数が減った場合、余った行を消す
+   for(int j = L; j < g_detailLineCount; j++)
+      ObjectDelete(0, "CCOMP_Scan_Detail_" + IntegerToString(j));
+   g_detailLineCount = L;
+  }
+//+------------------------------------------------------------------+

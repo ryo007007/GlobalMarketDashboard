@@ -314,7 +314,7 @@ void VerificationLogOpen()
 
    string datePart = TimeToString(TimeCurrent(), TIME_DATE);
    StringReplace(datePart, ".", "-");
-   g_verificationLogPath = folder + "\\CCompression_Verification_v1.30_" + datePart + ".csv";
+   g_verificationLogPath = folder + "\\CCompression_Verification_v1.40_" + datePart + ".csv";
    g_verificationLogDate = datePart;
 
    g_verificationLog = FileOpen(g_verificationLogPath,
@@ -608,10 +608,10 @@ void ExportTransitionRankingCSV()
   {
    string folder = "GlobalMarketDashboardVerification log";
    FolderCreate(folder);
-   string datePart = TimeToString(TimeLocal(), TIME_DATE);
+   string datePart = TimeToString(TimeCurrent(), TIME_DATE);
    StringReplace(datePart, ".", "-");
    string filename = folder + "\\CCompression_TransitionRanking_v1.40_" + datePart + ".csv";
-   int handle = FileOpen(filename, FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
+   int handle = FileOpen(filename, FILE_WRITE|FILE_CSV|FILE_ANSI, ',', CP_UTF8);
    if(handle == INVALID_HANDLE)
      {
       Print("TRANSITIONランキングCSVを開けません: ", filename, " error=", GetLastError());
@@ -711,7 +711,7 @@ void ExportOutcomeSummaryCSV()
         }
      }
    FileClose(handle);
-   Print("v1.30累積統計CSVを保存しました: MQL5/Files/", filename);
+   Print("v1.40累積統計CSVを保存しました: MQL5/Files/", filename);
   }
 
 string LoadOutcomeText(const int code)
@@ -1373,7 +1373,7 @@ void ExportCurrentReport()
    Print("CCompression: レポートを保存しました: MQL5/Files/", filename);
    ExportOutcomeSummaryCSV();
    if(InpExportRankingCSV) ExportTransitionRankingCSV();
-   Alert("個別レポートとv1.40累積統計CSVを保存しました。MQL5/Files/GlobalMarketDashboardVerification log/を確認してください。");
+   Alert("個別レポート・v1.40集計CSVを保存しました。ランキングCSVの設定も確認してください。保存先: MQL5/Files/GlobalMarketDashboardVerification log/");
   }
 
 
