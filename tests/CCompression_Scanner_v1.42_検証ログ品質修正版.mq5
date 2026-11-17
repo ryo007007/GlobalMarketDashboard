@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                         CCompression_Scanner_v1.42.mq5            |
 //|  複数通貨ペア × 複数時間足のCCompression状態を一覧表示するスキャナー |
 //|                                                                    |
@@ -1368,14 +1368,11 @@ void ExportCurrentReport()
       report += StringFormat("Age: %d\r\n", inst.age);
       report += "\r\n";
       report += StringFormat("ATR: %d/2\r\n", inst.atrScore);
-      report += StringFormat("ATR%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
-                             inst.atrPct, inst.lookback, inst.atrPctile);
+      report += StringFormat("ATR%%: %.3f\r\n", inst.atrPct);
       report += StringFormat("BB幅: %d/2\r\n", inst.bbScore);
-      report += StringFormat("BB幅%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
-                             inst.bbWidthPct, inst.lookback, inst.bbPctile);
+      report += StringFormat("BB幅%%: %.3f\r\n", inst.bbWidthPct);
       report += StringFormat("Range: %d/2\r\n", inst.rangeScore);
-      report += StringFormat("Range%%: %.3f（過去%d本中 下位%.0f%%）\r\n",
-                             inst.range20Pct, inst.lookback, inst.rangePctile);
+      report += StringFormat("Range%%: %.3f\r\n", inst.range20Pct);
       report += StringFormat("ADX: %d/2\r\n", inst.adxScore);
       report += StringFormat("ADX値: %.1f\r\n", inst.adxValue);
       report += "\r\n";
@@ -1577,19 +1574,19 @@ void DrawDetailPanel()
       lines[L] = "  " + GetStateExplanation(inst.state);
       clrs[L]  = base; L++;
 
-      lines[L] = StringFormat("  ATR    %d/2  %s  (ATR%% %.3f / 過去%d本中 下位%.0f%%)",
+      lines[L] = StringFormat("  ATR    %d/2  %s  (ATR%% %.3f)",
                               inst.atrScore, GetATRExplanation(inst.atrScore),
-                              inst.atrPct, inst.lookback, inst.atrPctile);
+                              inst.atrPct);
       clrs[L]  = base; L++;
 
-      lines[L] = StringFormat("  BB幅   %d/2  %s  (BB幅%% %.3f / 過去%d本中 下位%.0f%%)",
+      lines[L] = StringFormat("  BB幅   %d/2  %s  (BB幅%% %.3f)",
                               inst.bbScore, GetBBExplanation(inst.bbScore),
-                              inst.bbWidthPct, inst.lookback, inst.bbPctile);
+                              inst.bbWidthPct);
       clrs[L]  = base; L++;
 
-      lines[L] = StringFormat("  Range  %d/2  %s  (Range%% %.3f / 過去%d本中 下位%.0f%%)",
+      lines[L] = StringFormat("  Range  %d/2  %s  (Range%% %.3f)",
                               inst.rangeScore, GetRangeExplanation(inst.rangeScore),
-                              inst.range20Pct, inst.lookback, inst.rangePctile);
+                              inst.range20Pct);
       clrs[L]  = base; L++;
 
       lines[L] = StringFormat("  ADX    %d/2  %s  (ADX %.1f)",
